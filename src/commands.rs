@@ -471,8 +471,8 @@ Function Key Shortcuts:
 Built-in Commands:
   /help                     - Show this help
   /quit, /exit, /bye        - Exit the CLI
-  history                   - Show command history
-  clear                     - Clear screen
+  /history                  - Show command history
+  /clear                    - Clear screen
 
 You can execute any FreeSWITCH API command directly.
 Use Tab for command completion and Up/Down arrows for history.

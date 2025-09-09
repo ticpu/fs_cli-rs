@@ -5,10 +5,16 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use crossterm::{
+    cursor::MoveTo,
+    terminal::{Clear, ClearType},
+    ExecutableCommand,
+};
 use freeswitch_esl_rs::{EslEventType, EslHandle, EventFormat};
 use gethostname::gethostname;
 use rustyline::history::FileHistory;
 use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -108,9 +114,9 @@ struct Args {
     #[arg(long, default_value = "line")]
     color: ColorMode,
 
-    /// Execute single command and exit
-    #[arg(short = 'x')]
-    execute: Option<String>,
+    /// Execute commands and exit (can be used multiple times)
+    #[arg(short = 'x', action = clap::ArgAction::Append)]
+    execute: Vec<String>,
 
     /// History file path
     #[arg(long)]
@@ -184,29 +190,29 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Subscribe to events if requested
-    if args.events {
-        args.debug
-            .debug_print(EslDebugLevel::Debug, "Subscribing to events");
-        subscribe_to_events(&mut handle).await?;
-    }
-
-    // Enable logging if not quiet
-    if !args.quiet {
-        args.debug.debug_print(
-            EslDebugLevel::Debug,
-            &format!("Enabling logging at level: {}", args.log_level.as_str()),
-        );
-        enable_logging(&mut handle, args.log_level).await?;
-    }
-
-    // Execute single command or start interactive mode
-    if let Some(ref command) = args.execute {
-        execute_single_command(&mut handle, command, &args).await?;
+    // Execute commands or start interactive mode
+    if !args.execute.is_empty() {
+        // For -x mode: execute commands without subscribing to events or logging
+        execute_commands(&mut handle, &args.execute, &args).await?;
         // Clean disconnect
         info!("Disconnecting from FreeSWITCH...");
         handle.disconnect().await?;
     } else {
+        // Interactive mode: subscribe to events and enable logging if requested
+        if args.events {
+            args.debug
+                .debug_print(EslDebugLevel::Debug, "Subscribing to events");
+            subscribe_to_events(&mut handle).await?;
+        }
+
+        if !args.quiet {
+            args.debug.debug_print(
+                EslDebugLevel::Debug,
+                &format!("Enabling logging at level: {}", args.log_level.as_str()),
+            );
+            enable_logging(&mut handle, args.log_level).await?;
+        }
+
         run_interactive_mode(handle, &args).await?;
         // Handle is consumed by run_interactive_mode, no need to disconnect
     }
@@ -363,10 +369,14 @@ async fn enable_logging(handle: &mut EslHandle, log_level: LogLevel) -> Result<(
     Ok(())
 }
 
-/// Execute a single command and exit
-async fn execute_single_command(handle: &mut EslHandle, command: &str, args: &Args) -> Result<()> {
+/// Execute multiple commands and exit
+async fn execute_commands(handle: &mut EslHandle, commands: &[String], args: &Args) -> Result<()> {
     let processor = CommandProcessor::new(args.color, args.debug);
-    processor.execute_command(handle, command).await?;
+    
+    for command in commands {
+        processor.execute_command(handle, command).await?;
+    }
+    
     Ok(())
 }
 
@@ -436,7 +446,7 @@ fn run_readline_loop(
                 }
 
                 // Handle history command locally (since we have access to rl here)
-                if line == "history" {
+                if line == "/history" {
                     println!("Command History:");
                     let history = rl.history();
                     for (i, entry) in history
@@ -563,6 +573,14 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                             processor.show_help().await;
                             continue;
                         }
+                        "/clear" => {
+                            // Clear the screen using crossterm
+                            let mut stdout = io::stdout();
+                            let _ = stdout.execute(Clear(ClearType::All));
+                            let _ = stdout.execute(MoveTo(0, 0));
+                            let _ = stdout.flush();
+                            continue;
+                        }
                         _ => {
                             // Let the command processor handle other /commands
                             if let Err(e) = processor.execute_command(&mut handle, &command).await {
@@ -588,19 +606,6 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
 
                 // Handle other built-in commands
                 match command.as_str() {
-                    "clear" => {
-                        // Use external printer for clear screen sequence
-                        if let Some(printer_arc) = &external_printer {
-                            if let Ok(mut p) = printer_arc.try_lock() {
-                                let _ = p.print("\x1B[2J\x1B[1;1H".to_string());
-                            } else {
-                                print!("\x1B[2J\x1B[1;1H");
-                            }
-                        } else {
-                            print!("\x1B[2J\x1B[1;1H");
-                        }
-                        continue;
-                    }
                     "help" => {
                         processor.show_help().await;
                         continue;
