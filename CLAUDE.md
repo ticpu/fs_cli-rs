@@ -5,8 +5,8 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 
 ## Build System
 - Local: `cargo build --release`
-- Container: `./build.sh` (Debian Buster for compatibility)
-- CI/CD: `.github/workflows/build.yml` builds on push/tag
+- Container: `./build.sh [x86_64|aarch64|windows]` (Debian Buster for compatibility)
+- CI/CD: `.github/workflows/build.yml` builds multi-arch on push/tag
 
 ## Development Commands
 - `cargo check --message-format=short` - Fast syntax check
@@ -18,13 +18,16 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 2. Commit and push to master 
 3. `git tag -as vX.X.X -m "Release vX.X.X"`
 4. GitHub Actions creates release automatically
+- CI validates binaries with `--version` and `--help` output checks
+- Test ARM64 with: `QEMU_LD_PREFIX=/path/to/aarch64/root qemu-aarch64-static binary`
 
 ## Project Structure
 - Binary: `fs_cli` (see `Cargo.toml`)
 - Main: `src/main.rs`
 - Config system: `src/config.rs` + `src/args.rs` (YAML profiles, see `fs_cli.yaml`)
 - Commands: `src/commands.rs`
-- Release naming: `fs_cli_${version}_amd64.debian-compatible`
+- Multi-arch releases: Linux AMD64/ARM64, Windows AMD64
+- Release naming: `fs_cli_${version}_{amd64|arm64}.debian-compatible`, `fs_cli_${version}_amd64.windows.exe`
 
 ## Configuration (v0.2+)
 - YAML config with profiles: see `fs_cli.yaml` for example
