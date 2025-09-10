@@ -52,15 +52,15 @@ pub struct Args {
     pub timeout: Option<u64>,
 
     /// Retry connection on failure
-    #[arg(short, long)]
+    #[arg(short, long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub retry: Option<bool>,
 
     /// Reconnect on connection loss
-    #[arg(short = 'R', long)]
+    #[arg(short = 'R', long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub reconnect: Option<bool>,
 
     /// Subscribe to events on startup
-    #[arg(long)]
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub events: Option<bool>,
 
     /// Log level for FreeSWITCH logs
@@ -68,7 +68,7 @@ pub struct Args {
     pub log_level: Option<LogLevel>,
 
     /// Disable automatic log subscription on startup
-    #[arg(long)]
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub quiet: Option<bool>,
 
     /// Configuration file path (if missing, creates from embedded example)
