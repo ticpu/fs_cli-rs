@@ -11,6 +11,9 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
+/// Standard UUID length in characters (8-4-4-4-12 format)
+const UUID_LEN: usize = 36;
+
 /// Find the longest common prefix among a list of strings
 fn find_common_prefix(strings: &[&str]) -> String {
     if strings.is_empty() {
@@ -324,6 +327,22 @@ impl Completer for FsCliCompleter {
                             display: replacement_text.to_string(),
                             replacement: replacement_text.to_string(),
                         });
+                    } else if completion.len() > UUID_LEN
+                        && completion.chars().nth(UUID_LEN) == Some(' ')
+                        && completion
+                            .chars()
+                            .take(UUID_LEN)
+                            .all(|c| c.is_ascii_hexdigit() || c == '-')
+                    {
+                        // This looks like UUID completion format: "uuid timestamp name (state)"
+                        // Extract just the UUID (first UUID_LEN characters) for replacement
+                        let uuid = &completion[..UUID_LEN];
+                        if uuid.starts_with(current_word) {
+                            candidates.push(Pair {
+                                display: completion.clone(),
+                                replacement: format!("{} ", uuid),
+                            });
+                        }
                     } else if completion.starts_with(current_word) {
                         // Return the full completion as replacement since rustyline
                         // will replace from start position, not append at current position

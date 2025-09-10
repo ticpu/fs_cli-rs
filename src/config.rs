@@ -56,6 +56,9 @@ pub struct ProfileConfig {
 
     /// Function key macros
     pub macros: Option<HashMap<String, String>>,
+
+    /// Maximum number of channels to show in auto-complete (default: 32)
+    pub max_auto_complete_uuid: Option<u32>,
 }
 
 impl Default for ProfileConfig {
@@ -75,6 +78,7 @@ impl Default for ProfileConfig {
             log_level: Some("debug".to_string()),
             quiet: Some(false),
             macros: Some(Self::default_macros()),
+            max_auto_complete_uuid: Some(32),
         }
     }
 }
@@ -134,6 +138,7 @@ impl ProfileConfig {
             quiet: self.quiet.unwrap_or(false),
             macros: self.macros.clone().unwrap_or_default(),
             execute: Vec::new(), // Always empty from config, filled by CLI args
+            max_auto_complete_uuid: self.max_auto_complete_uuid.unwrap_or(32),
         })
     }
 }
@@ -156,6 +161,7 @@ pub struct AppConfig {
     pub quiet: bool,
     pub macros: HashMap<String, String>,
     pub execute: Vec<String>,
+    pub max_auto_complete_uuid: u32,
 }
 
 impl FsCliConfig {
@@ -318,6 +324,7 @@ fs_cli:
             quiet: true,
             macros: HashMap::new(),
             execute: Vec::new(),
+            max_auto_complete_uuid: 32,
         };
 
         let cli_args = MockCliArgs {

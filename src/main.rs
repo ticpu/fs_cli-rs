@@ -22,6 +22,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{error, info, warn};
 
 mod args;
+mod channel_info;
 mod commands;
 mod completion;
 mod config;
@@ -29,6 +30,7 @@ mod esl_debug;
 mod log_display;
 
 use args::Args;
+use channel_info::ChannelProvider;
 use commands::CommandProcessor;
 use completion::FsCliCompleter;
 use config::AppConfig;
@@ -67,12 +69,12 @@ fn setup_function_key_bindings(
     rl: &mut Editor<FsCliCompleter, FileHistory>,
     macros: &HashMap<String, String>,
 ) -> Result<()> {
-    // Bind F1-F12 to Cmd::Macro for automatic execution
+    // Bind F1-F12 to consistent macro behavior
     for i in 1..=12 {
         let key = format!("f{}", i);
         if let Some(command) = macros.get(&key) {
             let f_key = KeyEvent(KeyCode::F(i as u8), Modifiers::NONE);
-            // Use Cmd::Macro to replay the command + newline (which triggers AcceptLine)
+            // Use Cmd::Macro to insert the command (will append to existing line if any)
             rl.bind_sequence(f_key, Cmd::Macro(format!("{}\n", command)));
         }
     }
@@ -343,6 +345,7 @@ async fn get_console_complete(
     line: &str,
     pos: usize,
     debug_level: EslDebugLevel,
+    channel_provider: &ChannelProvider,
 ) -> Vec<String> {
     // Build the console_complete command
     let cmd = if pos > 0 && pos < line.len() {
@@ -351,8 +354,31 @@ async fn get_console_complete(
         format!("console_complete {}", line)
     };
 
+    // Check if this is a UUID command that might benefit from enhanced completion
+    let is_uuid_command = line.trim_start().starts_with("uuid_") && line.contains(' ');
+
     // ESL Debug level 6: Log console_complete API calls and responses
     debug_level.debug_print(EslDebugLevel::Debug6, &format!("ESL API: {}", cmd));
+
+    // Try enhanced UUID completion first for applicable commands
+    if is_uuid_command {
+        if let Ok(Some(enhanced_completions)) = channel_provider.get_uuid_completions(handle).await
+        {
+            debug_level.debug_print(
+                EslDebugLevel::Debug6,
+                &format!(
+                    "Using enhanced UUID completion with {} channels",
+                    enhanced_completions.len()
+                ),
+            );
+            return enhanced_completions;
+        }
+        // If None returned, fall through to default completion
+        debug_level.debug_print(
+            EslDebugLevel::Debug6,
+            "Falling back to default UUID completion",
+        );
+    }
 
     // Execute the API command
     match handle.api(&cmd).await {
@@ -394,6 +420,8 @@ async fn get_console_complete(
 }
 
 /// Parse the console_complete response from FreeSWITCH
+/// Returns (completion_text, is_uuid_with_info) - if is_uuid_with_info is true,
+/// completion_text should be split for display vs replacement
 fn parse_console_complete_response(body: &str) -> Vec<String> {
     let mut completions = Vec::new();
 
@@ -596,6 +624,9 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
     // Set the external printer on the command processor
     processor.set_printer(external_printer.clone());
 
+    // Create channel provider for enhanced UUID completion
+    let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
+
     // Wrap handle in Arc<Mutex> for sharing between tasks
     let handle_arc = Arc::new(Mutex::new(handle));
     let log_handle = if !config.quiet {
@@ -731,7 +762,7 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
             // Handle completion requests from readline thread
             Some(request) = completion_rx.recv() => {
                 let mut handle = handle_arc.lock().await;
-                let completions = get_console_complete(&mut handle, &request.line, request.pos, config.debug).await;
+                let completions = get_console_complete(&mut handle, &request.line, request.pos, config.debug, &channel_provider).await;
                 // Send the result back (ignore if channel closed)
                 let _ = request.response_tx.send(completions);
             }
