@@ -395,34 +395,9 @@ impl CommandProcessor {
             ));
         }
 
-        let subcommand = parts[0].to_lowercase();
-        let command = match subcommand.as_str() {
-            "channels" => {
-                if parts.len() > 1 && parts[1] == "count" {
-                    "show channels count"
-                } else {
-                    "show channels"
-                }
-            }
-            "calls" => "show calls",
-            "registrations" => "sofia status",
-            "modules" => "show modules",
-            "interfaces" => "show interfaces",
-            "api" => "show api",
-            "application" => "show application",
-            "codec" => "show codec",
-            "file" => "show file",
-            "timer" => "show timer",
-            "tasks" => "show tasks",
-            "complete" => "show complete",
-            _ => {
-                return Ok(Some(format!("Unknown show command: {}\n\
-                Available: channels, calls, registrations, modules, interfaces, api, application, codec, file, timer, tasks",
-                subcommand)));
-            }
-        };
+        let command = format!("show {}", parts.join(" "));
 
-        let response = handle.api(command).await?;
+        let response = handle.api(&command).await?;
         Ok(Some(response.body_string()))
     }
 
