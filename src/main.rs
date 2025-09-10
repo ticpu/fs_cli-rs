@@ -329,18 +329,134 @@ async fn execute_commands(
     Ok(())
 }
 
+/// Completion request from readline thread to main thread
+#[derive(Debug)]
+pub struct CompletionRequest {
+    pub line: String,
+    pub pos: usize,
+    pub response_tx: oneshot::Sender<Vec<String>>,
+}
+
+/// Get console completions from FreeSWITCH using the console_complete API
+async fn get_console_complete(
+    handle: &mut EslHandle,
+    line: &str,
+    pos: usize,
+    debug_level: EslDebugLevel,
+) -> Vec<String> {
+    // Build the console_complete command
+    let cmd = if pos > 0 && pos < line.len() {
+        format!("console_complete c={};{}", pos, line)
+    } else {
+        format!("console_complete {}", line)
+    };
+
+    // ESL Debug level 6: Log console_complete API calls and responses
+    debug_level.debug_print(EslDebugLevel::Debug6, &format!("ESL API: {}", cmd));
+
+    // Execute the API command
+    match handle.api(&cmd).await {
+        Ok(response) => {
+            debug_level.debug_print(
+                EslDebugLevel::Debug6,
+                &format!("ESL Response success: {}", response.is_success()),
+            );
+
+            if let Some(body) = response.body() {
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    &format!("ESL Response body (escaped): {:?}", body),
+                );
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    &format!("ESL Response body (raw):\n---START---\n{}\n---END---", body),
+                );
+                let parsed_completions = parse_console_complete_response(body);
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    &format!("Parsed completions: {:?}", parsed_completions),
+                );
+                parsed_completions
+            } else {
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    &format!("ESL Response: no body for command: {}", cmd),
+                );
+                Vec::new()
+            }
+        }
+        Err(e) => {
+            // Log error but don't print to console to avoid interfering with readline
+            tracing::debug!("Failed to get console completions: {}", e);
+            Vec::new()
+        }
+    }
+}
+
+/// Parse the console_complete response from FreeSWITCH
+fn parse_console_complete_response(body: &str) -> Vec<String> {
+    let mut completions = Vec::new();
+
+    // Parse bracketed completions like [            channels] and [                chat]
+    // FreeSWITCH uses format "[%20s]" so we look for [...] patterns
+    for line in body.lines() {
+        let mut chars = line.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '[' {
+                // Found start of bracket, collect until ']'
+                let mut bracket_content = String::new();
+                for inner_ch in chars.by_ref() {
+                    if inner_ch == ']' {
+                        break;
+                    }
+                    bracket_content.push(inner_ch);
+                }
+
+                // Clean up the content (remove padding spaces)
+                let option_text = bracket_content.trim();
+                if !option_text.is_empty() {
+                    completions.push(option_text.to_string());
+                }
+            }
+        }
+    }
+
+    // If we found bracketed completions, use those
+    if !completions.is_empty() {
+        return completions;
+    }
+
+    // Fallback: Handle write= directive only if no bracketed completions found
+    if let Some(write_start) = body.find("write=") {
+        let write_section = &body[write_start + 6..]; // Skip "write="
+        if let Some(colon_pos) = write_section.find(':') {
+            let replacement_text = write_section[colon_pos + 1..].trim_end();
+            if !replacement_text.is_empty() {
+                completions.push(format!("WRITE_DIRECTIVE:{}", replacement_text));
+            }
+        }
+    }
+
+    completions
+}
+
 /// Run the readline loop in a blocking thread
 fn run_readline_loop(
     cmd_tx: mpsc::UnboundedSender<String>,
     quit_tx: oneshot::Sender<()>,
     printer_tx: oneshot::Sender<Arc<Mutex<dyn ExternalPrinter + Send>>>,
+    completion_tx: mpsc::UnboundedSender<CompletionRequest>,
     config: &AppConfig,
 ) -> Result<()> {
-    // Set up readline editor
-    let mut rl = Editor::<FsCliCompleter, FileHistory>::new()?;
+    // Set up readline editor with completion configuration
+    let rl_config = rustyline::Config::builder()
+        .completion_type(rustyline::CompletionType::List)
+        .completion_show_all_if_ambiguous(true) // Show list on first tab
+        .build();
+    let mut rl = Editor::<FsCliCompleter, FileHistory>::with_config(rl_config)?;
 
-    // Create completer and provide ESL handle
-    let completer = FsCliCompleter::new();
+    // Create completer and provide completion channel
+    let completer = FsCliCompleter::new_with_completion_channel(completion_tx, config.debug);
     rl.set_helper(Some(completer));
 
     // Merge default macros with custom ones
@@ -452,6 +568,7 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
     let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
     let (printer_tx, printer_rx) = oneshot::channel::<Arc<Mutex<dyn ExternalPrinter + Send>>>();
+    let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
 
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
 
@@ -464,7 +581,7 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
     // Spawn rustyline in a blocking thread
     let config_clone = config.clone();
     let readline_handle = tokio::task::spawn_blocking(move || {
-        run_readline_loop(cmd_tx, quit_tx, printer_tx, &config_clone)
+        run_readline_loop(cmd_tx, quit_tx, printer_tx, completion_tx, &config_clone)
     });
 
     // Wait for external printer to be ready
@@ -610,6 +727,13 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
                         }
                     }
                 }
+            }
+            // Handle completion requests from readline thread
+            Some(request) = completion_rx.recv() => {
+                let mut handle = handle_arc.lock().await;
+                let completions = get_console_complete(&mut handle, &request.line, request.pos, config.debug).await;
+                // Send the result back (ignore if channel closed)
+                let _ = request.response_tx.send(completions);
             }
             // Handle quit signal from readline thread
             _ = &mut quit_rx => {

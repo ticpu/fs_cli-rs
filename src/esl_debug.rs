@@ -17,8 +17,8 @@ pub enum EslDebugLevel {
     Info = 3,    // Error, warning, and info messages
     Debug = 4,   // Basic debug output
     Debug5 = 5,  // More verbose debug
-    Debug6 = 6,  // Very verbose debug
-    Debug7 = 7,  // Maximum debug (all ESL protocol messages)
+    Debug6 = 6,  // ESL protocol messages and communication
+    Debug7 = 7,  // Maximum debug (all messages)
 }
 
 impl FromStr for EslDebugLevel {

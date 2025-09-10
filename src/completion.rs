@@ -1,11 +1,39 @@
 //! Tab completion support for fs_cli-rs
 
+use crate::esl_debug::EslDebugLevel;
+use crate::CompletionRequest;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Context, Helper};
 use std::borrow::Cow::{self, Borrowed, Owned};
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
+
+/// Find the longest common prefix among a list of strings
+fn find_common_prefix(strings: &[&str]) -> String {
+    if strings.is_empty() {
+        return String::new();
+    }
+
+    if strings.len() == 1 {
+        return strings[0].to_string();
+    }
+
+    let first = strings[0];
+    let mut prefix_len = 0;
+
+    for (i, ch) in first.chars().enumerate() {
+        if strings.iter().all(|s| s.chars().nth(i) == Some(ch)) {
+            prefix_len = i + 1;
+        } else {
+            break;
+        }
+    }
+
+    first.chars().take(prefix_len).collect()
+}
 
 /// FreeSWITCH CLI completer with command suggestions
 pub struct FsCliCompleter {
@@ -13,6 +41,8 @@ pub struct FsCliCompleter {
     history_hinter: HistoryHinter,
     bracket_highlighter: MatchingBracketHighlighter,
     bracket_validator: MatchingBracketValidator,
+    completion_tx: Option<mpsc::UnboundedSender<CompletionRequest>>,
+    debug_level: EslDebugLevel,
 }
 
 impl FsCliCompleter {
@@ -23,6 +53,23 @@ impl FsCliCompleter {
             history_hinter: HistoryHinter::new(),
             bracket_highlighter: MatchingBracketHighlighter::new(),
             bracket_validator: MatchingBracketValidator::new(),
+            completion_tx: None,
+            debug_level: EslDebugLevel::None,
+        }
+    }
+
+    /// Create new completer with completion channel for ESL-based completions
+    pub fn new_with_completion_channel(
+        completion_tx: mpsc::UnboundedSender<CompletionRequest>,
+        debug_level: EslDebugLevel,
+    ) -> Self {
+        Self {
+            filename_completer: FilenameCompleter::new(),
+            history_hinter: HistoryHinter::new(),
+            bracket_highlighter: MatchingBracketHighlighter::new(),
+            bracket_validator: MatchingBracketValidator::new(),
+            completion_tx: Some(completion_tx),
+            debug_level,
         }
     }
 
@@ -160,6 +207,79 @@ impl FsCliCompleter {
 
         Ok((pos, matches))
     }
+
+    /// Get ESL-based completions from FreeSWITCH
+    fn get_esl_completions(&self, line: &str, pos: usize) -> Vec<String> {
+        self.debug_level.debug_print(
+            EslDebugLevel::Debug6,
+            &format!("get_esl_completions called for '{}' pos {}", line, pos),
+        );
+
+        if let Some(completion_tx) = &self.completion_tx {
+            self.debug_level
+                .debug_print(EslDebugLevel::Debug6, "Have completion channel");
+
+            // Create a channel to receive the response
+            let (response_tx, response_rx) = oneshot::channel();
+
+            // Send completion request to main thread
+            let request = CompletionRequest {
+                line: line.to_string(),
+                pos,
+                response_tx,
+            };
+
+            if completion_tx.send(request).is_err() {
+                self.debug_level
+                    .debug_print(EslDebugLevel::Debug6, "Failed to send completion request");
+                return Vec::new();
+            }
+
+            self.debug_level.debug_print(
+                EslDebugLevel::Debug6,
+                "Sent completion request, waiting for response...",
+            );
+
+            // Wait for response with timeout (blocking call from sync context)
+            // We use a thread spawn to handle async within sync context
+            match std::thread::spawn(move || {
+                // Create a new runtime for this thread
+                let rt = tokio::runtime::Runtime::new().ok()?;
+                rt.block_on(async {
+                    tokio::time::timeout(Duration::from_millis(500), response_rx)
+                        .await
+                        .ok()?
+                        .ok()
+                })
+            })
+            .join()
+            {
+                Ok(Some(completions)) => {
+                    self.debug_level.debug_print(
+                        EslDebugLevel::Debug6,
+                        &format!("Received completions: {:?}", completions),
+                    );
+                    completions
+                }
+                Ok(None) => {
+                    self.debug_level
+                        .debug_print(EslDebugLevel::Debug6, "Received None from response");
+                    Vec::new()
+                }
+                Err(e) => {
+                    self.debug_level.debug_print(
+                        EslDebugLevel::Debug6,
+                        &format!("Thread join error: {:?}", e),
+                    );
+                    Vec::new()
+                }
+            }
+        } else {
+            self.debug_level
+                .debug_print(EslDebugLevel::Debug6, "No completion channel available");
+            Vec::new()
+        }
+    }
 }
 
 impl Default for FsCliCompleter {
@@ -179,7 +299,70 @@ impl Completer for FsCliCompleter {
         pos: usize,
         ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        // Try command completion first
+        // Skip ESL completion for client-side commands (starting with /)
+        if !line.trim_start().starts_with('/') {
+            // Try ESL completion first for FreeSWITCH commands
+            let esl_completions = self.get_esl_completions(line, pos);
+
+            if !esl_completions.is_empty() {
+                // Convert ESL completions to Pair format
+                let mut candidates = Vec::new();
+
+                // Find the current word being completed
+                let line_bytes = line.as_bytes();
+                let mut start = pos;
+                while start > 0 && line_bytes[start - 1] != b' ' {
+                    start -= 1;
+                }
+                let current_word = &line[start..pos];
+
+                for completion in esl_completions {
+                    // Handle write= directive specially
+                    if let Some(replacement_text) = completion.strip_prefix("WRITE_DIRECTIVE:") {
+                        // Skip "WRITE_DIRECTIVE:"
+                        candidates.push(Pair {
+                            display: replacement_text.to_string(),
+                            replacement: replacement_text.to_string(),
+                        });
+                    } else if completion.starts_with(current_word) {
+                        // Return the full completion as replacement since rustyline
+                        // will replace from start position, not append at current position
+                        candidates.push(Pair {
+                            display: completion.clone(),
+                            replacement: completion.clone(),
+                        });
+                    }
+                }
+
+                // Handle single vs multiple candidates differently
+                if candidates.len() == 1 {
+                    // Single candidate - return the full word as replacement
+                    // (rustyline will replace from start position to current position)
+                    // This is already handled above with full completion as replacement
+                } else if candidates.len() > 1 {
+                    // Multiple candidates - need to calculate common prefix and adjust replacements
+                    let completions: Vec<&str> =
+                        candidates.iter().map(|c| c.display.as_str()).collect();
+                    let common_prefix = find_common_prefix(&completions);
+
+                    if common_prefix.len() > current_word.len() {
+                        // There's a common prefix beyond what user typed - complete to it
+                        for candidate in &mut candidates {
+                            candidate.replacement = common_prefix.clone();
+                        }
+                    } else {
+                        // No useful common prefix - return each full completion for list display
+                        // Keep the full replacements as they are for proper list display
+                    }
+                }
+
+                if !candidates.is_empty() {
+                    return Ok((start, candidates));
+                }
+            }
+        }
+
+        // Fallback to static command completion
         let (start, candidates) = self.complete_command(line, pos)?;
 
         // If no command matches and we're completing a path-like string, try filename completion
