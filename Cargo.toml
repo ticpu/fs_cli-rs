@@ -1,6 +1,6 @@
 [package]
 name = "fs_cli-rs"
-version = "0.1.8"
+version = "0.2.2"
 edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "Interactive FreeSWITCH CLI client using ESL"
@@ -20,6 +20,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 colored = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 anyhow = "1.0"
 crossterm = "0.27"
 dirs = "5.0"

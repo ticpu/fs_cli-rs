@@ -1,0 +1,52 @@
+fs_cli:
+  default:
+    host: localhost
+    port: 8021
+    password: ClueCon
+    debug: 0
+    color: line
+    timeout: 2000
+    retry: false
+    reconnect: false
+    events: false
+    log_level: debug
+    quiet: false
+    macros:
+      f1: help
+      f2: status
+      f3: show channels
+      f4: show calls
+      f5: sofia status
+      f6: reloadxml
+      f7: /log console
+      f8: /log debug
+      f9: sofia status profile internal
+      f10: fsctl pause
+      f11: fsctl resume
+      f12: version
+
+  prod:
+    host: prod-freeswitch-server.example.com
+    port: 8022
+    password: SecurePassword123
+    debug: 1
+    timeout: 5000
+    retry: true
+    reconnect: true
+    macros:
+      f1: help
+      f2: status
+      f3: show channels count
+      f5: sofia status gateway
+      f12: version
+
+  dev:
+    host: dev-server
+    port: 8021
+    debug: 5
+    quiet: true
+    macros:
+      f1: help
+      f2: show channels
+      f3: show calls
+      f4: reload mod_sofia

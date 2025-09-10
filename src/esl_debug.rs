@@ -40,6 +40,24 @@ impl FromStr for EslDebugLevel {
 }
 
 impl EslDebugLevel {
+    /// Create from u8 value (0-7)
+    pub fn from_u8(value: u8) -> anyhow::Result<Self> {
+        match value {
+            0 => Ok(EslDebugLevel::None),
+            1 => Ok(EslDebugLevel::Error),
+            2 => Ok(EslDebugLevel::Warning),
+            3 => Ok(EslDebugLevel::Info),
+            4 => Ok(EslDebugLevel::Debug),
+            5 => Ok(EslDebugLevel::Debug5),
+            6 => Ok(EslDebugLevel::Debug6),
+            7 => Ok(EslDebugLevel::Debug7),
+            _ => Err(anyhow::anyhow!(
+                "Invalid ESL debug level: {} (must be 0-7)",
+                value
+            )),
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             EslDebugLevel::None => "0",

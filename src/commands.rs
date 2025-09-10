@@ -460,7 +460,7 @@ Control Commands:
   reload [module]           - Reload module or XML config
   originate <url> <dest>    - Originate a call
 
-Function Key Shortcuts:
+Function Key Shortcuts (customizable in config):
   F1  = help                F7  = /log console
   F2  = status              F8  = /log debug
   F3  = show channels       F9  = sofia status profile internal
@@ -473,6 +473,12 @@ Built-in Commands:
   /quit, /exit, /bye        - Exit the CLI
   /history                  - Show command history
   /clear                    - Clear screen
+
+Configuration:
+  Profiles can be configured in ~/.config/fs_cli.yaml or /etc/freeswitch/fs_cli.yaml
+  Use --config to specify a custom configuration file path
+  Use --list-profiles to see available profiles
+  Default configuration is created automatically if missing
 
 You can execute any FreeSWITCH API command directly.
 Use Tab for command completion and Up/Down arrows for history.

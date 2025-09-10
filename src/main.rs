@@ -4,7 +4,6 @@
 //! command history, and comprehensive logging.
 
 use anyhow::{Context, Result};
-use clap::Parser;
 use crossterm::{
     cursor::MoveTo,
     terminal::{Clear, ClearType},
@@ -14,6 +13,7 @@ use freeswitch_esl_rs::{EslEventType, EslHandle, EventFormat};
 use gethostname::gethostname;
 use rustyline::history::FileHistory;
 use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,163 +21,98 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::{error, info, warn};
 
+mod args;
 mod commands;
 mod completion;
+mod config;
 mod esl_debug;
 mod log_display;
 
-use commands::{ColorMode, CommandProcessor, LogLevel};
+use args::Args;
+use commands::CommandProcessor;
 use completion::FsCliCompleter;
+use config::AppConfig;
 use esl_debug::EslDebugLevel;
 use log_display::LogDisplay;
 
-const DEFAULT_HOST: &str = "localhost";
-
 /// Default FreeSWITCH function key bindings
-fn get_default_fnkeys() -> Vec<&'static str> {
-    vec![
-        "help",                          // F1
-        "status",                        // F2
-        "show channels",                 // F3
-        "show calls",                    // F4
-        "sofia status",                  // F5
-        "reloadxml",                     // F6
-        "/log console",                  // F7
-        "/log debug",                    // F8
-        "sofia status profile internal", // F9
-        "fsctl pause",                   // F10
-        "fsctl resume",                  // F11
-        "version",                       // F12
-    ]
+fn get_default_fnkeys() -> HashMap<String, String> {
+    let mut macros = HashMap::new();
+    macros.insert("f1".to_string(), "help".to_string());
+    macros.insert("f2".to_string(), "status".to_string());
+    macros.insert("f3".to_string(), "show channels".to_string());
+    macros.insert("f4".to_string(), "show calls".to_string());
+    macros.insert("f5".to_string(), "sofia status".to_string());
+    macros.insert("f6".to_string(), "reloadxml".to_string());
+    macros.insert("f7".to_string(), "/log console".to_string());
+    macros.insert("f8".to_string(), "/log debug".to_string());
+    macros.insert(
+        "f9".to_string(),
+        "sofia status profile internal".to_string(),
+    );
+    macros.insert("f10".to_string(), "fsctl pause".to_string());
+    macros.insert("f11".to_string(), "fsctl resume".to_string());
+    macros.insert("f12".to_string(), "version".to_string());
+    macros
 }
 
-/// Parse function key shortcuts (F1-F12)
-fn parse_function_key(input: &str) -> Option<&'static str> {
-    let fnkeys = get_default_fnkeys();
-
-    match input.to_lowercase().as_str() {
-        "f1" => Some(fnkeys[0]),
-        "f2" => Some(fnkeys[1]),
-        "f3" => Some(fnkeys[2]),
-        "f4" => Some(fnkeys[3]),
-        "f5" => Some(fnkeys[4]),
-        "f6" => Some(fnkeys[5]),
-        "f7" => Some(fnkeys[6]),
-        "f8" => Some(fnkeys[7]),
-        "f9" => Some(fnkeys[8]),
-        "f10" => Some(fnkeys[9]),
-        "f11" => Some(fnkeys[10]),
-        "f12" => Some(fnkeys[11]),
-        _ => None,
-    }
+/// Parse function key shortcuts (F1-F12) with custom macros
+fn parse_function_key(input: &str, macros: &HashMap<String, String>) -> Option<String> {
+    let key = input.to_lowercase();
+    macros.get(&key).cloned()
 }
 
-/// Set up function key bindings for readline
-fn setup_function_key_bindings(rl: &mut Editor<FsCliCompleter, FileHistory>) -> Result<()> {
-    let fnkeys = get_default_fnkeys();
-
+/// Set up function key bindings for readline with custom macros
+fn setup_function_key_bindings(
+    rl: &mut Editor<FsCliCompleter, FileHistory>,
+    macros: &HashMap<String, String>,
+) -> Result<()> {
     // Bind F1-F12 to Cmd::Macro for automatic execution
-    for (i, &command) in fnkeys.iter().enumerate() {
-        let f_key = KeyEvent(KeyCode::F((i + 1) as u8), Modifiers::NONE);
-        // Use Cmd::Macro to replay the command + newline (which triggers AcceptLine)
-        rl.bind_sequence(f_key, Cmd::Macro(format!("{}\n", command)));
+    for i in 1..=12 {
+        let key = format!("f{}", i);
+        if let Some(command) = macros.get(&key) {
+            let f_key = KeyEvent(KeyCode::F(i as u8), Modifiers::NONE);
+            // Use Cmd::Macro to replay the command + newline (which triggers AcceptLine)
+            rl.bind_sequence(f_key, Cmd::Macro(format!("{}\n", command)));
+        }
     }
 
     Ok(())
 }
 
-/// Interactive FreeSWITCH CLI client
-#[derive(Parser, Debug, Clone)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// FreeSWITCH hostname or IP address
-    #[arg(short = 'H', long, default_value = DEFAULT_HOST)]
-    host: String,
-
-    /// FreeSWITCH ESL port
-    #[arg(short = 'P', long, default_value_t = 8021)]
-    port: u16,
-
-    /// ESL password
-    #[arg(short = 'p', long, default_value = "ClueCon")]
-    password: String,
-
-    /// Username for authentication (optional)
-    #[arg(short, long)]
-    user: Option<String>,
-
-    /// ESL debug level (0-7, higher = more verbose)
-    #[arg(short, long, default_value_t = EslDebugLevel::None)]
-    debug: EslDebugLevel,
-
-    /// Color mode for output (never, tag, line)
-    #[arg(long, default_value = "line")]
-    color: ColorMode,
-
-    /// Execute commands and exit (can be used multiple times)
-    #[arg(short = 'x', action = clap::ArgAction::Append)]
-    execute: Vec<String>,
-
-    /// History file path
-    #[arg(long)]
-    history_file: Option<PathBuf>,
-
-    /// Connection timeout in milliseconds
-    #[arg(short = 'T', long = "connect-timeout", default_value_t = 2000)]
-    timeout: u64,
-
-    /// Retry connection on failure
-    #[arg(short, long)]
-    retry: bool,
-
-    /// Reconnect on connection loss
-    #[arg(short = 'R', long)]
-    reconnect: bool,
-
-    /// Subscribe to events on startup
-    #[arg(long)]
-    events: bool,
-
-    /// Log level for FreeSWITCH logs
-    #[arg(short = 'l', long, default_value = "debug")]
-    log_level: LogLevel,
-
-    /// Disable automatic log subscription on startup
-    #[arg(long)]
-    quiet: bool,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let config = Args::parse_and_merge()?;
 
     // Initialize logging
-    setup_logging(args.debug)?;
+    setup_logging(config.debug)?;
 
     // Connect to FreeSWITCH with optional retry
-    args.debug
+    config
+        .debug
         .debug_print(EslDebugLevel::Debug, "About to connect to FreeSWITCH");
-    let mut handle = match connect_to_freeswitch_with_retry(&args).await {
+    let mut handle = match connect_to_freeswitch_with_retry(&config).await {
         Ok(handle) => {
-            args.debug
+            config
+                .debug
                 .debug_print(EslDebugLevel::Debug, "Successfully connected to FreeSWITCH");
             handle
         }
         Err(e) => {
             eprintln!(
                 "Failed to connect to FreeSWITCH at {}:{}",
-                args.host, args.port
+                config.host, config.port
             );
             if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
                 match io_err.kind() {
                     std::io::ErrorKind::ConnectionRefused => {
                         eprintln!(
                             "Connection refused - is FreeSWITCH running and listening on port {}?",
-                            args.port
+                            config.port
                         );
                     }
                     std::io::ErrorKind::TimedOut => {
-                        eprintln!("Connection timed out after {} ms", args.timeout);
+                        eprintln!("Connection timed out after {} ms", config.timeout);
                     }
                     _ => {
                         eprintln!("Connection error: {}", io_err);
@@ -191,29 +126,30 @@ async fn main() -> Result<()> {
     };
 
     // Execute commands or start interactive mode
-    if !args.execute.is_empty() {
+    if !config.execute.is_empty() {
         // For -x mode: execute commands without subscribing to events or logging
-        execute_commands(&mut handle, &args.execute, &args).await?;
+        execute_commands(&mut handle, &config.execute, &config).await?;
         // Clean disconnect
         info!("Disconnecting from FreeSWITCH...");
         handle.disconnect().await?;
     } else {
         // Interactive mode: subscribe to events and enable logging if requested
-        if args.events {
-            args.debug
+        if config.events {
+            config
+                .debug
                 .debug_print(EslDebugLevel::Debug, "Subscribing to events");
             subscribe_to_events(&mut handle).await?;
         }
 
-        if !args.quiet {
-            args.debug.debug_print(
+        if !config.quiet {
+            config.debug.debug_print(
                 EslDebugLevel::Debug,
-                &format!("Enabling logging at level: {}", args.log_level.as_str()),
+                &format!("Enabling logging at level: {}", config.log_level.as_str()),
             );
-            enable_logging(&mut handle, args.log_level).await?;
+            enable_logging(&mut handle, config.log_level).await?;
         }
 
-        run_interactive_mode(handle, &args).await?;
+        run_interactive_mode(handle, &config).await?;
         // Handle is consumed by run_interactive_mode, no need to disconnect
     }
 
@@ -234,21 +170,24 @@ fn setup_logging(debug_level: EslDebugLevel) -> Result<()> {
 }
 
 /// Connect to FreeSWITCH with timeout
-async fn connect_to_freeswitch(args: &Args) -> Result<EslHandle> {
-    info!("Connecting to FreeSWITCH at {}:{}", args.host, args.port);
+async fn connect_to_freeswitch(config: &AppConfig) -> Result<EslHandle> {
+    info!(
+        "Connecting to FreeSWITCH at {}:{}",
+        config.host, config.port
+    );
 
-    let connect_result = if let Some(ref user) = args.user {
+    let connect_result = if let Some(ref user) = config.user {
         info!("Using user authentication: {}", user);
         timeout(
-            Duration::from_millis(args.timeout),
-            EslHandle::connect_with_user(&args.host, args.port, user, &args.password),
+            Duration::from_millis(config.timeout),
+            EslHandle::connect_with_user(&config.host, config.port, user, &config.password),
         )
         .await
     } else {
         info!("Using password authentication");
         timeout(
-            Duration::from_millis(args.timeout),
-            EslHandle::connect(&args.host, args.port, &args.password),
+            Duration::from_millis(config.timeout),
+            EslHandle::connect(&config.host, config.port, &config.password),
         )
         .await
     };
@@ -261,20 +200,23 @@ async fn connect_to_freeswitch(args: &Args) -> Result<EslHandle> {
 }
 
 /// Connect to FreeSWITCH with optional retry logic
-async fn connect_to_freeswitch_with_retry(args: &Args) -> Result<EslHandle> {
-    if !args.retry {
-        return connect_to_freeswitch(args).await;
+async fn connect_to_freeswitch_with_retry(config: &AppConfig) -> Result<EslHandle> {
+    if !config.retry {
+        return connect_to_freeswitch(config).await;
     }
 
-    info!("Retry mode enabled - will retry every {} ms", args.timeout);
+    info!(
+        "Retry mode enabled - will retry every {} ms",
+        config.timeout
+    );
 
     loop {
-        match connect_to_freeswitch(args).await {
+        match connect_to_freeswitch(config).await {
             Ok(handle) => return Ok(handle),
             Err(e) => {
                 warn!("Connection attempt failed: {}", e);
-                info!("Retrying in {} ms...", args.timeout);
-                tokio::time::sleep(Duration::from_millis(args.timeout)).await;
+                info!("Retrying in {} ms...", config.timeout);
+                tokio::time::sleep(Duration::from_millis(config.timeout)).await;
             }
         }
     }
@@ -298,15 +240,15 @@ fn is_connection_error(error: &anyhow::Error) -> bool {
 }
 
 /// Attempt to reconnect if connection is lost and reconnect is enabled
-async fn handle_reconnection(handle_arc: &Arc<Mutex<EslHandle>>, args: &Args) -> Result<()> {
-    if !args.reconnect {
+async fn handle_reconnection(handle_arc: &Arc<Mutex<EslHandle>>, config: &AppConfig) -> Result<()> {
+    if !config.reconnect {
         return Err(anyhow::anyhow!("Connection lost and reconnect disabled"));
     }
 
     warn!("Connection lost, attempting to reconnect...");
 
     loop {
-        match connect_to_freeswitch(args).await {
+        match connect_to_freeswitch(config).await {
             Ok(new_handle) => {
                 info!("Reconnected successfully");
                 let mut handle = handle_arc.lock().await;
@@ -315,8 +257,8 @@ async fn handle_reconnection(handle_arc: &Arc<Mutex<EslHandle>>, args: &Args) ->
             }
             Err(e) => {
                 warn!("Reconnection attempt failed: {}", e);
-                info!("Retrying reconnection in {} ms...", args.timeout);
-                tokio::time::sleep(Duration::from_millis(args.timeout)).await;
+                info!("Retrying reconnection in {} ms...", config.timeout);
+                tokio::time::sleep(Duration::from_millis(config.timeout)).await;
             }
         }
     }
@@ -343,12 +285,15 @@ async fn subscribe_to_events(handle: &mut EslHandle) -> Result<()> {
 }
 
 /// Enable logging at the specified level
-async fn enable_logging(handle: &mut EslHandle, log_level: LogLevel) -> Result<()> {
+async fn enable_logging(
+    handle: &mut EslHandle,
+    log_level: crate::commands::LogLevel,
+) -> Result<()> {
     info!("Enabling logging at level: {}", log_level.as_str());
 
     use freeswitch_esl_rs::command::EslCommand;
 
-    let cmd = if log_level == LogLevel::NoLog {
+    let cmd = if log_level == crate::commands::LogLevel::NoLog {
         EslCommand::Api {
             command: "nolog".to_string(),
         }
@@ -370,13 +315,17 @@ async fn enable_logging(handle: &mut EslHandle, log_level: LogLevel) -> Result<(
 }
 
 /// Execute multiple commands and exit
-async fn execute_commands(handle: &mut EslHandle, commands: &[String], args: &Args) -> Result<()> {
-    let processor = CommandProcessor::new(args.color, args.debug);
-    
+async fn execute_commands(
+    handle: &mut EslHandle,
+    commands: &[String],
+    config: &AppConfig,
+) -> Result<()> {
+    let processor = CommandProcessor::new(config.color, config.debug);
+
     for command in commands {
         processor.execute_command(handle, command).await?;
     }
-    
+
     Ok(())
 }
 
@@ -385,7 +334,7 @@ fn run_readline_loop(
     cmd_tx: mpsc::UnboundedSender<String>,
     quit_tx: oneshot::Sender<()>,
     printer_tx: oneshot::Sender<Arc<Mutex<dyn ExternalPrinter + Send>>>,
-    args: &Args,
+    config: &AppConfig,
 ) -> Result<()> {
     // Set up readline editor
     let mut rl = Editor::<FsCliCompleter, FileHistory>::new()?;
@@ -394,8 +343,14 @@ fn run_readline_loop(
     let completer = FsCliCompleter::new();
     rl.set_helper(Some(completer));
 
-    // Set up function key bindings
-    setup_function_key_bindings(&mut rl)?;
+    // Merge default macros with custom ones
+    let mut macros = get_default_fnkeys();
+    for (key, value) in &config.macros {
+        macros.insert(key.clone(), value.clone());
+    }
+
+    // Set up function key bindings with custom macros
+    setup_function_key_bindings(&mut rl, &macros)?;
 
     // Create external printer for background log output
     let printer = rl.create_external_printer()?;
@@ -405,7 +360,7 @@ fn run_readline_loop(
     let _ = printer_tx.send(printer_arc);
 
     // Load history
-    let history_file = args.history_file.clone().unwrap_or_else(|| {
+    let history_file = config.history_file.clone().unwrap_or_else(|| {
         let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push(".fs_cli_history");
         path
@@ -419,12 +374,10 @@ fn run_readline_loop(
 
     // Readline loop
     loop {
-        let prompt_host = if args.host == DEFAULT_HOST {
-            gethostname()
-                .to_string_lossy()
-                .to_string()
+        let prompt_host = if config.host == "localhost" {
+            gethostname().to_string_lossy().to_string()
         } else {
-            args.host.clone()
+            config.host.clone()
         };
         let prompt = format!("freeswitch@{}> ", prompt_host);
 
@@ -492,8 +445,8 @@ fn run_readline_loop(
 }
 
 /// Run interactive CLI mode
-async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
-    let mut processor = CommandProcessor::new(args.color, args.debug);
+async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<()> {
+    let mut processor = CommandProcessor::new(config.color, config.debug);
 
     // Create channels for communication between rustyline thread and main async thread
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
@@ -502,10 +455,16 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
 
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
 
+    // Prepare macros for function key parsing
+    let mut macros = get_default_fnkeys();
+    for (key, value) in &config.macros {
+        macros.insert(key.clone(), value.clone());
+    }
+
     // Spawn rustyline in a blocking thread
-    let args_clone = args.clone();
+    let config_clone = config.clone();
     let readline_handle = tokio::task::spawn_blocking(move || {
-        run_readline_loop(cmd_tx, quit_tx, printer_tx, &args_clone)
+        run_readline_loop(cmd_tx, quit_tx, printer_tx, &config_clone)
     });
 
     // Wait for external printer to be ready
@@ -522,11 +481,11 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
 
     // Wrap handle in Arc<Mutex> for sharing between tasks
     let handle_arc = Arc::new(Mutex::new(handle));
-    let log_handle = if !args.quiet {
+    let log_handle = if !config.quiet {
         let handle_clone = handle_arc.clone();
-        let color_mode = args.color;
+        let color_mode = config.color;
         let printer_clone = external_printer.clone();
-        let args_clone = args.clone();
+        let config_clone = config.clone();
         Some(tokio::spawn(async move {
             loop {
                 {
@@ -538,11 +497,11 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                     )
                     .await
                     {
-                        if is_connection_error(&e) && args_clone.reconnect {
+                        if is_connection_error(&e) && config_clone.reconnect {
                             warn!("Connection lost in log monitoring, attempting reconnect...");
                             drop(h); // Release the lock before reconnection
                             if let Err(reconnect_err) =
-                                handle_reconnection(&handle_clone, &args_clone).await
+                                handle_reconnection(&handle_clone, &config_clone).await
                             {
                                 warn!("Failed to reconnect in log monitoring: {}", reconnect_err);
                             }
@@ -586,7 +545,7 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                             if let Err(e) = processor.execute_command(&mut handle, &command).await {
                                 if is_connection_error(&e) {
                                     drop(handle); // Release the lock before reconnection
-                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, args).await {
+                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
                                         processor.handle_error(reconnect_err).await;
                                         continue;
                                     }
@@ -612,17 +571,17 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                     }
                     _ => {
                         // Check for function key shortcuts (F1-F12) typed manually
-                        if let Some(fn_command) = parse_function_key(&command) {
-                            if let Err(e) = processor.execute_command(&mut handle, fn_command).await {
+                        if let Some(fn_command) = parse_function_key(&command, &macros) {
+                            if let Err(e) = processor.execute_command(&mut handle, &fn_command).await {
                                 if is_connection_error(&e) {
                                     drop(handle); // Release the lock before reconnection
-                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, args).await {
+                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
                                         processor.handle_error(reconnect_err).await;
                                         continue;
                                     }
                                     // Retry the command after successful reconnection
                                     let mut handle = handle_arc.lock().await;
-                                    if let Err(retry_err) = processor.execute_command(&mut handle, fn_command).await {
+                                    if let Err(retry_err) = processor.execute_command(&mut handle, &fn_command).await {
                                         processor.handle_error(retry_err).await;
                                     }
                                 } else {
@@ -636,7 +595,7 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                         if let Err(e) = processor.execute_command(&mut handle, &command).await {
                             if is_connection_error(&e) {
                                 drop(handle); // Release the lock before reconnection
-                                if let Err(reconnect_err) = handle_reconnection(&handle_arc, args).await {
+                                if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
                                     processor.handle_error(reconnect_err).await;
                                     continue;
                                 }

@@ -58,6 +58,10 @@ jobs:
       with:
         path: artifacts
         
+    - name: Extract version from tag
+      id: version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        
     - name: Prepare release assets
       run: |
         cd artifacts
@@ -65,12 +69,11 @@ jobs:
           cd "$dir"
           binary_file=$(ls)
           # Rename to Debian-style naming: fs_cli_${VERSION}_amd64.deb-compatible
-          version=${GITHUB_REF#refs/tags/v}
-          new_name="fs_cli_${version}_amd64.debian-compatible"
+          new_name="fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible"
           mv "$binary_file" "$new_name"
           cd ..
         done
-        
+      
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
@@ -86,8 +89,8 @@ jobs:
           
           **Installation:**
           ```bash
-          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fs_cli_${{ github.ref_name }}_amd64.debian-compatible
-          sudo install -m0755 fs_cli_${{ github.ref_name }}_amd64.debian-compatible /usr/local/bin/fs_cli && rm fs_cli_${{ github.ref_name }}_amd64.debian-compatible
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible
+          sudo install -m0755 fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible /usr/local/bin/fs_cli && rm fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible
           ```
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
