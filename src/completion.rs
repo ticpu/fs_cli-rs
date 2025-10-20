@@ -355,9 +355,11 @@ impl Completer for FsCliCompleter {
 
                 // Handle single vs multiple candidates differently
                 if candidates.len() == 1 {
-                    // Single candidate - return the full word as replacement
-                    // (rustyline will replace from start position to current position)
-                    // This is already handled above with full completion as replacement
+                    // Single candidate - add trailing space like C readline
+                    let candidate = &mut candidates[0];
+                    if !candidate.replacement.ends_with(' ') {
+                        candidate.replacement.push(' ');
+                    }
                 } else if candidates.len() > 1 {
                     // Multiple candidates - need to calculate common prefix and adjust replacements
                     let completions: Vec<&str> =
