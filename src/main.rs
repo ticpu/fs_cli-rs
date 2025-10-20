@@ -74,8 +74,8 @@ fn setup_function_key_bindings(
         let key = format!("f{}", i);
         if let Some(command) = macros.get(&key) {
             let f_key = KeyEvent(KeyCode::F(i as u8), Modifiers::NONE);
-            // Use Cmd::Macro to insert the command (will append to existing line if any)
-            rl.bind_sequence(f_key, Cmd::Macro(format!("{}\n", command)));
+            // Use Cmd::MacroClearLine to clear existing line before inserting the command
+            rl.bind_sequence(f_key, Cmd::MacroClearLine(format!("{}\n", command)));
         }
     }
 
@@ -86,7 +86,8 @@ fn setup_function_key_bindings(
 async fn main() -> Result<()> {
     let config = Args::parse_and_merge()?;
 
-    // Initialize logging
+    // Initialize logging and global debug level
+    crate::esl_debug::init_global_debug_level(config.debug);
     setup_logging(config.debug)?;
 
     // Connect to FreeSWITCH with optional retry
@@ -525,7 +526,14 @@ fn run_readline_loop(
         };
         let prompt = format!("freeswitch@{}> ", prompt_host);
 
-        match rl.readline(&prompt) {
+        // Check for pending line restoration (from MacroClearLine)
+        let result = if let Some(restore_content) = rl.take_pending_restore() {
+            rl.readline_with_initial(&prompt, (&restore_content, ""))
+        } else {
+            rl.readline(&prompt)
+        };
+
+        match result {
             Ok(line) => {
                 let line = line.trim();
                 if line.is_empty() {

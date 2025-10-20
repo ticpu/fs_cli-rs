@@ -384,7 +384,15 @@ impl Completer for FsCliCompleter {
         }
 
         // Fallback to static command completion
-        let (start, candidates) = self.complete_command(line, pos)?;
+        let (start, mut candidates) = self.complete_command(line, pos)?;
+
+        // Add trailing space for single static completions
+        if candidates.len() == 1 {
+            let candidate = &mut candidates[0];
+            if !candidate.replacement.ends_with(' ') {
+                candidate.replacement.push(' ');
+            }
+        }
 
         // If no command matches and we're completing a path-like string, try filename completion
         if candidates.is_empty() && (line.contains('/') || line.contains('\\')) {
