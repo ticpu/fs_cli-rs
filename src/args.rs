@@ -68,7 +68,7 @@ pub struct Args {
     pub log_level: Option<LogLevel>,
 
     /// Disable automatic log subscription on startup
-    #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    #[arg(short = 'q', long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub quiet: Option<bool>,
 
     /// Configuration file path (if missing, creates from embedded example)

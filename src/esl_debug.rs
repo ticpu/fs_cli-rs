@@ -107,16 +107,3 @@ static GLOBAL_DEBUG_LEVEL: OnceLock<EslDebugLevel> = OnceLock::new();
 pub fn init_global_debug_level(level: EslDebugLevel) {
     GLOBAL_DEBUG_LEVEL.set(level).ok();
 }
-
-/// Get the current global debug level
-pub fn get_global_debug_level() -> EslDebugLevel {
-    *GLOBAL_DEBUG_LEVEL.get().unwrap_or(&EslDebugLevel::None)
-}
-
-/// Global debug print function
-pub fn debug_print(level: EslDebugLevel, message: &str) {
-    let global_level = get_global_debug_level();
-    if global_level >= level {
-        eprintln!("[ESL_DEBUG:{}] {}", level.as_str(), message);
-    }
-}
