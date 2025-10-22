@@ -58,7 +58,6 @@ esac
 echo "Building for target: $TARGET"
 
 # Build the container using git dependencies
-cd /mnt/bcachefs/home/jerome/GIT/freeswitch/fs_cli-rs
 $CONTAINER_CMD build -f Containerfile -t fs_cli-build --build-arg TARGET=$TARGET . -q
 
 # Create temporary container and copy binary
