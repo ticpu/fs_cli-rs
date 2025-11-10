@@ -79,10 +79,12 @@ impl EslDebugLevel {
             EslDebugLevel::Error => "error",
             EslDebugLevel::Warning => "warn",
             EslDebugLevel::Info => "info",
-            EslDebugLevel::Debug | EslDebugLevel::Debug5 | EslDebugLevel::Debug6 => {
+            EslDebugLevel::Debug | EslDebugLevel::Debug5 => {
                 "fs_cli_rs=debug,freeswitch_esl_rs=debug,rustyline=warn"
             }
-            EslDebugLevel::Debug7 => "debug",
+            EslDebugLevel::Debug6 | EslDebugLevel::Debug7 => {
+                "fs_cli_rs=trace,freeswitch_esl_rs=trace,rustyline=warn"
+            }
         }
     }
 
