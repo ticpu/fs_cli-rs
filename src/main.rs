@@ -162,6 +162,7 @@ async fn main() -> Result<()> {
 /// Set up logging based on debug level
 fn setup_logging(debug_level: EslDebugLevel) -> Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(debug_level.tracing_filter())
         .with_target(false)
         .with_thread_ids(false)
