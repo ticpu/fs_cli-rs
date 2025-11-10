@@ -82,7 +82,7 @@ fn setup_function_key_bindings(
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config = Args::parse_and_merge()?;
 
