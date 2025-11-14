@@ -1,0 +1,10 @@
+Package: fs-cli
+Version: 0.0.0-replaced-by-makefile
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Jérôme Poulin <jeromepoulin@gmail.com>
+Description: Interactive FreeSWITCH CLI client using ESL
+ A command-line interface client for FreeSWITCH that connects via ESL
+ (Event Socket Layer) and provides an interactive shell with command
+ history, completion, and configurable profiles.

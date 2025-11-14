@@ -15,5 +15,9 @@ Thumbs.db
 
 # Binary output
 fs_cli
-fs_cli.*
+fs_cli-deb
 *.exe
+
+# Debian packaging
+*.deb
+package.tmp
