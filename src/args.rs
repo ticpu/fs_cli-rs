@@ -27,7 +27,7 @@ pub struct Args {
     #[arg(short = 'p', long)]
     pub password: Option<String>,
 
-    /// Username for authentication (optional)
+    /// Username for userauth (format: user@domain, e.g., admin@default)
     #[arg(short, long)]
     pub user: Option<String>,
 

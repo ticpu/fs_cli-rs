@@ -9,7 +9,7 @@ use crossterm::{
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use freeswitch_esl_rs::{EslEventType, EslHandle, EventFormat};
+use freeswitch_esl_rs::{EslError, EslEventType, EslHandle, EventFormat};
 use gethostname::gethostname;
 use rustyline::history::FileHistory;
 use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
@@ -102,11 +102,44 @@ async fn main() -> Result<()> {
             handle
         }
         Err(e) => {
-            eprintln!(
-                "Failed to connect to FreeSWITCH at {}:{}",
-                config.host, config.port
-            );
-            if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+            if let Some(esl_err) = e.downcast_ref::<EslError>() {
+                match esl_err {
+                    EslError::AuthenticationFailed { reason } => {
+                        eprintln!("Authentication failed: {}", reason);
+                    }
+                    EslError::Io(io_err) => {
+                        eprintln!(
+                            "Failed to connect to FreeSWITCH at {}:{}",
+                            config.host, config.port
+                        );
+                        match io_err.kind() {
+                            std::io::ErrorKind::ConnectionRefused => {
+                                eprintln!(
+                                    "Connection refused - is FreeSWITCH running and listening on port {}?",
+                                    config.port
+                                );
+                            }
+                            std::io::ErrorKind::TimedOut => {
+                                eprintln!("Connection timed out after {} ms", config.timeout);
+                            }
+                            _ => {
+                                eprintln!("IO error: {}", io_err);
+                            }
+                        }
+                    }
+                    _ => {
+                        eprintln!(
+                            "Failed to connect to FreeSWITCH at {}:{}",
+                            config.host, config.port
+                        );
+                        eprintln!("Error: {}", esl_err);
+                    }
+                }
+            } else if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                eprintln!(
+                    "Failed to connect to FreeSWITCH at {}:{}",
+                    config.host, config.port
+                );
                 match io_err.kind() {
                     std::io::ErrorKind::ConnectionRefused => {
                         eprintln!(
@@ -118,10 +151,14 @@ async fn main() -> Result<()> {
                         eprintln!("Connection timed out after {} ms", config.timeout);
                     }
                     _ => {
-                        eprintln!("Connection error: {}", io_err);
+                        eprintln!("IO error: {}", io_err);
                     }
                 }
             } else {
+                eprintln!(
+                    "Failed to connect to FreeSWITCH at {}:{}",
+                    config.host, config.port
+                );
                 eprintln!("Error: {}", e);
             }
             std::process::exit(1);
