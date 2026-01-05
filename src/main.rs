@@ -189,7 +189,10 @@ async fn main() -> Result<()> {
             enable_logging(&mut handle, config.log_level).await?;
         }
 
-        run_interactive_mode(handle, &config).await?;
+        if let Err(e) = run_interactive_mode(handle, &config).await {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
         // Handle is consumed by run_interactive_mode, no need to disconnect
     }
 
@@ -265,8 +268,11 @@ async fn connect_to_freeswitch_with_retry(config: &AppConfig) -> Result<EslHandl
 
 /// Check if error indicates connection loss
 fn is_connection_error(error: &anyhow::Error) -> bool {
+    if let Some(esl_err) = error.downcast_ref::<EslError>() {
+        return esl_err.is_connection_error();
+    }
     if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
-        matches!(
+        return matches!(
             io_err.kind(),
             std::io::ErrorKind::ConnectionRefused
                 | std::io::ErrorKind::ConnectionReset
@@ -274,10 +280,9 @@ fn is_connection_error(error: &anyhow::Error) -> bool {
                 | std::io::ErrorKind::BrokenPipe
                 | std::io::ErrorKind::TimedOut
                 | std::io::ErrorKind::UnexpectedEof
-        )
-    } else {
-        false
+        );
     }
+    false
 }
 
 /// Attempt to reconnect if connection is lost and reconnect is enabled
@@ -634,6 +639,12 @@ fn run_readline_loop(
     Ok(())
 }
 
+/// Reason for application shutdown
+#[derive(Debug, Clone)]
+enum ShutdownReason {
+    ConnectionLost,
+}
+
 /// Run interactive CLI mode
 async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<()> {
     let mut processor = CommandProcessor::new(config.color, config.debug);
@@ -643,6 +654,7 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
     let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
     let (printer_tx, printer_rx) = oneshot::channel::<Arc<Mutex<dyn ExternalPrinter + Send>>>();
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
+    let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<ShutdownReason>();
 
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
 
@@ -680,6 +692,7 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
         let color_mode = config.color;
         let printer_clone = external_printer.clone();
         let config_clone = config.clone();
+        let shutdown_tx_clone = shutdown_tx.clone();
         Some(tokio::spawn(async move {
             loop {
                 {
@@ -691,13 +704,19 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
                     )
                     .await
                     {
-                        if is_connection_error(&e) && config_clone.reconnect {
-                            warn!("Connection lost in log monitoring, attempting reconnect...");
-                            drop(h); // Release the lock before reconnection
-                            if let Err(reconnect_err) =
-                                handle_reconnection(&handle_clone, &config_clone).await
-                            {
-                                warn!("Failed to reconnect in log monitoring: {}", reconnect_err);
+                        if is_connection_error(&e) {
+                            if config_clone.reconnect {
+                                warn!("Connection lost in log monitoring, attempting reconnect...");
+                                drop(h);
+                                if let Err(reconnect_err) =
+                                    handle_reconnection(&handle_clone, &config_clone).await
+                                {
+                                    warn!("Failed to reconnect in log monitoring: {}", reconnect_err);
+                                }
+                            } else {
+                                error!("Connection to FreeSWITCH lost");
+                                let _ = shutdown_tx_clone.send(ShutdownReason::ConnectionLost);
+                                return;
                             }
                         } else {
                             warn!("Error in background log monitoring: {}", e);
@@ -712,9 +731,17 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
         None
     };
 
+    // Track shutdown reason
+    let mut shutdown_reason: Option<ShutdownReason> = None;
+
     // Main command processing loop
     loop {
         tokio::select! {
+            // Handle shutdown signal from background tasks
+            Some(reason) = shutdown_rx.recv() => {
+                shutdown_reason = Some(reason);
+                break;
+            }
             // Handle commands from readline thread
             Some(command) = cmd_rx.recv() => {
                 let mut handle = handle_arc.lock().await;
@@ -738,15 +765,21 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
                             // Let the command processor handle other /commands
                             if let Err(e) = processor.execute_command(&mut handle, &command).await {
                                 if is_connection_error(&e) {
-                                    drop(handle); // Release the lock before reconnection
-                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
-                                        processor.handle_error(reconnect_err).await;
-                                        continue;
-                                    }
-                                    // Retry the command after successful reconnection
-                                    let mut handle = handle_arc.lock().await;
-                                    if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
-                                        processor.handle_error(retry_err).await;
+                                    drop(handle);
+                                    if config.reconnect {
+                                        if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
+                                            processor.handle_error(reconnect_err).await;
+                                            continue;
+                                        }
+                                        // Retry the command after successful reconnection
+                                        let mut handle = handle_arc.lock().await;
+                                        if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
+                                            processor.handle_error(retry_err).await;
+                                        }
+                                    } else {
+                                        error!("Connection to FreeSWITCH lost");
+                                        let _ = shutdown_tx.send(ShutdownReason::ConnectionLost);
+                                        break;
                                     }
                                 } else {
                                     processor.handle_error(e).await;
@@ -768,15 +801,21 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
                         if let Some(fn_command) = parse_function_key(&command, &macros) {
                             if let Err(e) = processor.execute_command(&mut handle, &fn_command).await {
                                 if is_connection_error(&e) {
-                                    drop(handle); // Release the lock before reconnection
-                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
-                                        processor.handle_error(reconnect_err).await;
-                                        continue;
-                                    }
-                                    // Retry the command after successful reconnection
-                                    let mut handle = handle_arc.lock().await;
-                                    if let Err(retry_err) = processor.execute_command(&mut handle, &fn_command).await {
-                                        processor.handle_error(retry_err).await;
+                                    drop(handle);
+                                    if config.reconnect {
+                                        if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
+                                            processor.handle_error(reconnect_err).await;
+                                            continue;
+                                        }
+                                        // Retry the command after successful reconnection
+                                        let mut handle = handle_arc.lock().await;
+                                        if let Err(retry_err) = processor.execute_command(&mut handle, &fn_command).await {
+                                            processor.handle_error(retry_err).await;
+                                        }
+                                    } else {
+                                        error!("Connection to FreeSWITCH lost");
+                                        let _ = shutdown_tx.send(ShutdownReason::ConnectionLost);
+                                        break;
                                     }
                                 } else {
                                     processor.handle_error(e).await;
@@ -788,15 +827,21 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
                         // Execute FreeSWITCH command and show output immediately
                         if let Err(e) = processor.execute_command(&mut handle, &command).await {
                             if is_connection_error(&e) {
-                                drop(handle); // Release the lock before reconnection
-                                if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
-                                    processor.handle_error(reconnect_err).await;
-                                    continue;
-                                }
-                                // Retry the command after successful reconnection
-                                let mut handle = handle_arc.lock().await;
-                                if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
-                                    processor.handle_error(retry_err).await;
+                                drop(handle);
+                                if config.reconnect {
+                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
+                                        processor.handle_error(reconnect_err).await;
+                                        continue;
+                                    }
+                                    // Retry the command after successful reconnection
+                                    let mut handle = handle_arc.lock().await;
+                                    if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
+                                        processor.handle_error(retry_err).await;
+                                    }
+                                } else {
+                                    error!("Connection to FreeSWITCH lost");
+                                    let _ = shutdown_tx.send(ShutdownReason::ConnectionLost);
+                                    break;
                                 }
                             } else {
                                 processor.handle_error(e).await;
@@ -819,35 +864,111 @@ async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<(
         }
     }
 
+    // Check for any pending shutdown signals
+    if shutdown_reason.is_none() {
+        if let Ok(reason) = shutdown_rx.try_recv() {
+            shutdown_reason = Some(reason);
+        }
+    }
+
     // Clean up background tasks
     if let Some(handle) = log_handle {
         handle.abort();
     }
 
-    // Wait for readline thread to finish
+    // Wait for readline thread to finish (abort if we're shutting down due to connection loss)
+    if shutdown_reason.is_some() {
+        readline_handle.abort();
+    }
     if let Err(e) = readline_handle.await {
-        warn!("Error waiting for readline thread: {}", e);
-    }
-
-    // Clean disconnect
-    info!("Disconnecting from FreeSWITCH...");
-
-    // Try to unwrap the Arc, but handle the case where other references exist
-    match Arc::try_unwrap(handle_arc) {
-        Ok(mutex) => {
-            let mut handle = mutex.into_inner();
-            if let Err(e) = handle.disconnect().await {
-                warn!("Error during clean disconnect: {}", e);
-            }
-        }
-        Err(arc) => {
-            // If we can't unwrap, just disconnect through the Arc
-            let mut handle = arc.lock().await;
-            if let Err(e) = handle.disconnect().await {
-                warn!("Error during disconnect: {}", e);
-            }
+        if !e.is_cancelled() {
+            warn!("Error waiting for readline thread: {}", e);
         }
     }
 
-    Ok(())
+    // Only attempt clean disconnect if not already disconnected
+    if shutdown_reason.is_none() {
+        info!("Disconnecting from FreeSWITCH...");
+
+        match Arc::try_unwrap(handle_arc) {
+            Ok(mutex) => {
+                let mut handle = mutex.into_inner();
+                if let Err(e) = handle.disconnect().await {
+                    warn!("Error during clean disconnect: {}", e);
+                }
+            }
+            Err(arc) => {
+                let mut handle = arc.lock().await;
+                if let Err(e) = handle.disconnect().await {
+                    warn!("Error during disconnect: {}", e);
+                }
+            }
+        }
+    }
+
+    match shutdown_reason {
+        Some(ShutdownReason::ConnectionLost) => {
+            Err(anyhow::anyhow!("Connection to FreeSWITCH lost"))
+        }
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_connection_error_with_esl_errors() {
+        // EslError::ConnectionClosed should be detected
+        let err: anyhow::Error = EslError::ConnectionClosed.into();
+        assert!(is_connection_error(&err));
+
+        // EslError::NotConnected should be detected
+        let err: anyhow::Error = EslError::NotConnected.into();
+        assert!(is_connection_error(&err));
+
+        // EslError from IO error should be detected
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
+        let err: anyhow::Error = EslError::from(io_err).into();
+        assert!(is_connection_error(&err));
+
+        // Non-connection EslErrors should not be detected
+        let err: anyhow::Error = EslError::Timeout { timeout_ms: 1000 }.into();
+        assert!(!is_connection_error(&err));
+
+        let err: anyhow::Error = EslError::auth_failed("bad password").into();
+        assert!(!is_connection_error(&err));
+    }
+
+    #[test]
+    fn test_is_connection_error_with_io_errors() {
+        for error_kind in [
+            std::io::ErrorKind::ConnectionRefused,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            let io_err = std::io::Error::new(error_kind, "test");
+            let err: anyhow::Error = io_err.into();
+            assert!(
+                is_connection_error(&err),
+                "{:?} should be a connection error",
+                error_kind
+            );
+        }
+
+        // Non-connection IO errors should not be detected
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test");
+        let err: anyhow::Error = io_err.into();
+        assert!(!is_connection_error(&err));
+    }
+
+    #[test]
+    fn test_is_connection_error_with_other_errors() {
+        let err = anyhow::anyhow!("Some random error");
+        assert!(!is_connection_error(&err));
+    }
 }
