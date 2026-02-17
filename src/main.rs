@@ -1,141 +1,246 @@
 //! fs_cli-rs: Interactive FreeSWITCH CLI client using ESL
-//!
-//! A modern Rust-based FreeSWITCH CLI client with readline capabilities,
-//! command history, and comprehensive logging.
 
 use anyhow::{Context, Result};
-use crossterm::{
-    cursor::MoveTo,
-    terminal::{Clear, ClearType},
-    ExecutableCommand,
-};
-use freeswitch_esl_rs::{EslError, EslEventType, EslHandle, EventFormat};
-use gethostname::gethostname;
-use rustyline::history::FileHistory;
-use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
-use std::collections::HashMap;
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use freeswitch_esl_rs::{EslClient, EslError, EslEventStream, EslEventType, EventFormat};
 use tokio::time::{timeout, Duration};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 mod args;
 mod channel_info;
 mod commands;
 mod completion;
 mod config;
+mod console_complete;
 mod esl_debug;
 mod log_display;
+mod readline;
+mod session;
 
 use args::Args;
-use channel_info::ChannelProvider;
 use commands::CommandProcessor;
-use completion::FsCliCompleter;
 use config::AppConfig;
 use esl_debug::EslDebugLevel;
-use log_display::LogDisplay;
 
-/// Default FreeSWITCH function key bindings
-fn get_default_fnkeys() -> HashMap<String, String> {
-    let mut macros = HashMap::new();
-    macros.insert("f1".to_string(), "help".to_string());
-    macros.insert("f2".to_string(), "status".to_string());
-    macros.insert("f3".to_string(), "show channels".to_string());
-    macros.insert("f4".to_string(), "show calls".to_string());
-    macros.insert("f5".to_string(), "sofia status".to_string());
-    macros.insert("f6".to_string(), "reloadxml".to_string());
-    macros.insert("f7".to_string(), "/log console".to_string());
-    macros.insert("f8".to_string(), "/log debug".to_string());
-    macros.insert(
-        "f9".to_string(),
-        "sofia status profile internal".to_string(),
-    );
-    macros.insert("f10".to_string(), "fsctl pause".to_string());
-    macros.insert("f11".to_string(), "fsctl resume".to_string());
-    macros.insert("f12".to_string(), "version".to_string());
-    macros
-}
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let config = Args::parse_and_merge()?;
 
-/// Parse function key shortcuts (F1-F12) with custom macros
-fn parse_function_key(input: &str, macros: &HashMap<String, String>) -> Option<String> {
-    let key = input.to_lowercase();
-    macros.get(&key).cloned()
-}
+    crate::esl_debug::init_global_debug_level(config.debug);
+    setup_logging(config.debug)?;
 
-/// Set up function key bindings for readline with custom macros
-fn setup_function_key_bindings(
-    rl: &mut Editor<FsCliCompleter, FileHistory>,
-    macros: &HashMap<String, String>,
-) -> Result<()> {
-    // Bind F1-F12 to consistent macro behavior
-    for i in 1..=12 {
-        let key = format!("f{}", i);
-        if let Some(command) = macros.get(&key) {
-            let f_key = KeyEvent(KeyCode::F(i as u8), Modifiers::NONE);
-            // Use Cmd::MacroClearLine to clear existing line before inserting the command
-            rl.bind_sequence(f_key, Cmd::MacroClearLine(format!("{}\n", command)));
+    config
+        .debug
+        .debug_print(EslDebugLevel::Debug, "About to connect to FreeSWITCH");
+    let (client, events) = match connect_to_freeswitch_with_retry(&config).await {
+        Ok(pair) => {
+            config
+                .debug
+                .debug_print(EslDebugLevel::Debug, "Successfully connected to FreeSWITCH");
+            pair
+        }
+        Err(e) => {
+            print_connect_error(&e, &config);
+            std::process::exit(1);
+        }
+    };
+
+    if !config
+        .execute
+        .is_empty()
+    {
+        execute_commands(&client, &config.execute, &config).await?;
+        info!("Disconnecting from FreeSWITCH...");
+        client
+            .disconnect()
+            .await?;
+    } else {
+        if config.events {
+            config
+                .debug
+                .debug_print(EslDebugLevel::Debug, "Subscribing to events");
+            subscribe_to_events(&client).await?;
+        }
+
+        if !config.quiet {
+            config
+                .debug
+                .debug_print(
+                    EslDebugLevel::Debug,
+                    &format!(
+                        "Enabling logging at level: {}",
+                        config
+                            .log_level
+                            .as_str()
+                    ),
+                );
+            enable_logging(&client, config.log_level).await?;
+        }
+
+        if let Err(e) = session::run_interactive_mode(client, events, &config).await {
+            eprintln!("{}", e);
+            std::process::exit(1);
         }
     }
 
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    let config = Args::parse_and_merge()?;
+fn setup_logging(debug_level: EslDebugLevel) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(debug_level.tracing_filter())
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .init();
+    Ok(())
+}
 
-    // Initialize logging and global debug level
-    crate::esl_debug::init_global_debug_level(config.debug);
-    setup_logging(config.debug)?;
+/// Connect to FreeSWITCH with timeout
+pub async fn connect_to_freeswitch(config: &AppConfig) -> Result<(EslClient, EslEventStream)> {
+    info!(
+        "Connecting to FreeSWITCH at {}:{}",
+        config.host, config.port
+    );
 
-    // Connect to FreeSWITCH with optional retry
-    config
-        .debug
-        .debug_print(EslDebugLevel::Debug, "About to connect to FreeSWITCH");
-    let mut handle = match connect_to_freeswitch_with_retry(&config).await {
-        Ok(handle) => {
-            config
-                .debug
-                .debug_print(EslDebugLevel::Debug, "Successfully connected to FreeSWITCH");
-            handle
+    let result = if let Some(ref user) = config.user {
+        info!("Using user authentication: {}", user);
+        timeout(
+            Duration::from_millis(config.timeout),
+            EslClient::connect_with_user(&config.host, config.port, user, &config.password),
+        )
+        .await
+    } else {
+        info!("Using password authentication");
+        timeout(
+            Duration::from_millis(config.timeout),
+            EslClient::connect(&config.host, config.port, &config.password),
+        )
+        .await
+    };
+
+    let (client, events) = result
+        .context("Connection timed out")?
+        .context("Failed to connect to FreeSWITCH")?;
+
+    Ok((client, events))
+}
+
+async fn connect_to_freeswitch_with_retry(
+    config: &AppConfig,
+) -> Result<(EslClient, EslEventStream)> {
+    if !config.retry {
+        return connect_to_freeswitch(config).await;
+    }
+
+    info!(
+        "Retry mode enabled - will retry every {} ms",
+        config.timeout
+    );
+
+    loop {
+        match connect_to_freeswitch(config).await {
+            Ok(pair) => return Ok(pair),
+            Err(e) => {
+                warn!("Connection attempt failed: {}", e);
+                info!("Retrying in {} ms...", config.timeout);
+                tokio::time::sleep(Duration::from_millis(config.timeout)).await;
+            }
         }
-        Err(e) => {
-            if let Some(esl_err) = e.downcast_ref::<EslError>() {
-                match esl_err {
-                    EslError::AuthenticationFailed { reason } => {
-                        eprintln!("Authentication failed: {}", reason);
-                    }
-                    EslError::Io(io_err) => {
-                        eprintln!(
-                            "Failed to connect to FreeSWITCH at {}:{}",
-                            config.host, config.port
-                        );
-                        match io_err.kind() {
-                            std::io::ErrorKind::ConnectionRefused => {
-                                eprintln!(
-                                    "Connection refused - is FreeSWITCH running and listening on port {}?",
-                                    config.port
-                                );
-                            }
-                            std::io::ErrorKind::TimedOut => {
-                                eprintln!("Connection timed out after {} ms", config.timeout);
-                            }
-                            _ => {
-                                eprintln!("IO error: {}", io_err);
-                            }
-                        }
-                    }
-                    _ => {
-                        eprintln!(
-                            "Failed to connect to FreeSWITCH at {}:{}",
-                            config.host, config.port
-                        );
-                        eprintln!("Error: {}", esl_err);
-                    }
-                }
-            } else if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+    }
+}
+
+/// Check if error indicates connection loss
+pub fn is_connection_error(error: &anyhow::Error) -> bool {
+    if let Some(esl_err) = error.downcast_ref::<EslError>() {
+        return esl_err.is_connection_error();
+    }
+    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
+        return matches!(
+            io_err.kind(),
+            std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::UnexpectedEof
+        );
+    }
+    false
+}
+
+/// Subscribe to events for monitoring
+pub async fn subscribe_to_events(client: &EslClient) -> Result<()> {
+    info!("Subscribing to events...");
+    client
+        .subscribe_events(
+            EventFormat::Plain,
+            &[
+                EslEventType::ChannelCreate,
+                EslEventType::ChannelAnswer,
+                EslEventType::ChannelHangup,
+                EslEventType::Heartbeat,
+            ],
+        )
+        .await?;
+    println!("Event monitoring enabled");
+    Ok(())
+}
+
+/// Enable logging at the specified level
+pub async fn enable_logging(
+    client: &EslClient,
+    log_level: crate::commands::LogLevel,
+) -> Result<()> {
+    info!("Enabling logging at level: {}", log_level.as_str());
+
+    use freeswitch_esl_rs::command::EslCommand;
+
+    let cmd = if log_level == crate::commands::LogLevel::NoLog {
+        EslCommand::Api {
+            command: "nolog".to_string(),
+        }
+    } else {
+        EslCommand::Log {
+            level: log_level
+                .as_str()
+                .to_string(),
+        }
+    };
+
+    let response = client
+        .send_command(cmd)
+        .await?;
+    if !response.is_success() {
+        if let Some(reply) = response.reply_text() {
+            warn!("Failed to set log level: {}", reply);
+        }
+    }
+    Ok(())
+}
+
+async fn execute_commands(
+    client: &EslClient,
+    commands: &[String],
+    config: &AppConfig,
+) -> Result<()> {
+    let processor = CommandProcessor::new(config.color, config.debug);
+    for command in commands {
+        processor
+            .execute_command(client, command)
+            .await?;
+    }
+    Ok(())
+}
+
+fn print_connect_error(e: &anyhow::Error, config: &AppConfig) {
+    if let Some(esl_err) = e.downcast_ref::<EslError>() {
+        match esl_err {
+            EslError::AuthenticationFailed { reason } => {
+                eprintln!("Authentication failed: {}", reason);
+            }
+            EslError::Io(io_err) => {
                 eprintln!(
                     "Failed to connect to FreeSWITCH at {}:{}",
                     config.host, config.port
@@ -154,763 +259,40 @@ async fn main() -> Result<()> {
                         eprintln!("IO error: {}", io_err);
                     }
                 }
-            } else {
+            }
+            _ => {
                 eprintln!(
                     "Failed to connect to FreeSWITCH at {}:{}",
                     config.host, config.port
                 );
-                eprintln!("Error: {}", e);
-            }
-            std::process::exit(1);
-        }
-    };
-
-    // Execute commands or start interactive mode
-    if !config.execute.is_empty() {
-        // For -x mode: execute commands without subscribing to events or logging
-        execute_commands(&mut handle, &config.execute, &config).await?;
-        // Clean disconnect
-        info!("Disconnecting from FreeSWITCH...");
-        handle.disconnect().await?;
-    } else {
-        // Interactive mode: subscribe to events and enable logging if requested
-        if config.events {
-            config
-                .debug
-                .debug_print(EslDebugLevel::Debug, "Subscribing to events");
-            subscribe_to_events(&mut handle).await?;
-        }
-
-        if !config.quiet {
-            config.debug.debug_print(
-                EslDebugLevel::Debug,
-                &format!("Enabling logging at level: {}", config.log_level.as_str()),
-            );
-            enable_logging(&mut handle, config.log_level).await?;
-        }
-
-        if let Err(e) = run_interactive_mode(handle, &config).await {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-        // Handle is consumed by run_interactive_mode, no need to disconnect
-    }
-
-    Ok(())
-}
-
-/// Set up logging based on debug level
-fn setup_logging(debug_level: EslDebugLevel) -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(debug_level.tracing_filter())
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .init();
-
-    Ok(())
-}
-
-/// Connect to FreeSWITCH with timeout
-async fn connect_to_freeswitch(config: &AppConfig) -> Result<EslHandle> {
-    info!(
-        "Connecting to FreeSWITCH at {}:{}",
-        config.host, config.port
-    );
-
-    let connect_result = if let Some(ref user) = config.user {
-        info!("Using user authentication: {}", user);
-        timeout(
-            Duration::from_millis(config.timeout),
-            EslHandle::connect_with_user(&config.host, config.port, user, &config.password),
-        )
-        .await
-    } else {
-        info!("Using password authentication");
-        timeout(
-            Duration::from_millis(config.timeout),
-            EslHandle::connect(&config.host, config.port, &config.password),
-        )
-        .await
-    };
-
-    let handle = connect_result
-        .context("Connection timed out")?
-        .context("Failed to connect to FreeSWITCH")?;
-
-    Ok(handle)
-}
-
-/// Connect to FreeSWITCH with optional retry logic
-async fn connect_to_freeswitch_with_retry(config: &AppConfig) -> Result<EslHandle> {
-    if !config.retry {
-        return connect_to_freeswitch(config).await;
-    }
-
-    info!(
-        "Retry mode enabled - will retry every {} ms",
-        config.timeout
-    );
-
-    loop {
-        match connect_to_freeswitch(config).await {
-            Ok(handle) => return Ok(handle),
-            Err(e) => {
-                warn!("Connection attempt failed: {}", e);
-                info!("Retrying in {} ms...", config.timeout);
-                tokio::time::sleep(Duration::from_millis(config.timeout)).await;
+                eprintln!("Error: {}", esl_err);
             }
         }
-    }
-}
-
-/// Check if error indicates connection loss
-fn is_connection_error(error: &anyhow::Error) -> bool {
-    if let Some(esl_err) = error.downcast_ref::<EslError>() {
-        return esl_err.is_connection_error();
-    }
-    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
-        return matches!(
-            io_err.kind(),
-            std::io::ErrorKind::ConnectionRefused
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::BrokenPipe
-                | std::io::ErrorKind::TimedOut
-                | std::io::ErrorKind::UnexpectedEof
+    } else if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+        eprintln!(
+            "Failed to connect to FreeSWITCH at {}:{}",
+            config.host, config.port
         );
-    }
-    false
-}
-
-/// Attempt to reconnect if connection is lost and reconnect is enabled
-async fn handle_reconnection(handle_arc: &Arc<Mutex<EslHandle>>, config: &AppConfig) -> Result<()> {
-    if !config.reconnect {
-        return Err(anyhow::anyhow!("Connection lost and reconnect disabled"));
-    }
-
-    warn!("Connection lost, attempting to reconnect...");
-
-    loop {
-        match connect_to_freeswitch(config).await {
-            Ok(new_handle) => {
-                info!("Reconnected successfully");
-                let mut handle = handle_arc.lock().await;
-                *handle = new_handle;
-                return Ok(());
+        match io_err.kind() {
+            std::io::ErrorKind::ConnectionRefused => {
+                eprintln!(
+                    "Connection refused - is FreeSWITCH running and listening on port {}?",
+                    config.port
+                );
             }
-            Err(e) => {
-                warn!("Reconnection attempt failed: {}", e);
-                info!("Retrying reconnection in {} ms...", config.timeout);
-                tokio::time::sleep(Duration::from_millis(config.timeout)).await;
+            std::io::ErrorKind::TimedOut => {
+                eprintln!("Connection timed out after {} ms", config.timeout);
+            }
+            _ => {
+                eprintln!("IO error: {}", io_err);
             }
         }
-    }
-}
-
-/// Subscribe to events for monitoring
-async fn subscribe_to_events(handle: &mut EslHandle) -> Result<()> {
-    info!("Subscribing to events...");
-
-    handle
-        .subscribe_events(
-            EventFormat::Plain,
-            &[
-                EslEventType::ChannelCreate,
-                EslEventType::ChannelAnswer,
-                EslEventType::ChannelHangup,
-                EslEventType::Heartbeat,
-            ],
-        )
-        .await?;
-
-    println!("Event monitoring enabled");
-    Ok(())
-}
-
-/// Enable logging at the specified level
-async fn enable_logging(
-    handle: &mut EslHandle,
-    log_level: crate::commands::LogLevel,
-) -> Result<()> {
-    info!("Enabling logging at level: {}", log_level.as_str());
-
-    use freeswitch_esl_rs::command::EslCommand;
-
-    let cmd = if log_level == crate::commands::LogLevel::NoLog {
-        EslCommand::Api {
-            command: "nolog".to_string(),
-        }
     } else {
-        EslCommand::Log {
-            level: log_level.as_str().to_string(),
-        }
-    };
-
-    let response = handle.send_command(cmd).await?;
-
-    if !response.is_success() {
-        if let Some(reply) = response.reply_text() {
-            warn!("Failed to set log level: {}", reply);
-        }
-    }
-
-    Ok(())
-}
-
-/// Execute multiple commands and exit
-async fn execute_commands(
-    handle: &mut EslHandle,
-    commands: &[String],
-    config: &AppConfig,
-) -> Result<()> {
-    let processor = CommandProcessor::new(config.color, config.debug);
-
-    for command in commands {
-        processor.execute_command(handle, command).await?;
-    }
-
-    Ok(())
-}
-
-/// Completion request from readline thread to main thread
-#[derive(Debug)]
-pub struct CompletionRequest {
-    pub line: String,
-    pub pos: usize,
-    pub response_tx: oneshot::Sender<Vec<String>>,
-}
-
-/// Get console completions from FreeSWITCH using the console_complete API
-async fn get_console_complete(
-    handle: &mut EslHandle,
-    line: &str,
-    pos: usize,
-    debug_level: EslDebugLevel,
-    channel_provider: &ChannelProvider,
-) -> Vec<String> {
-    // Build the console_complete command
-    let cmd = if pos > 0 && pos < line.len() {
-        format!("console_complete c={};{}", pos, line)
-    } else {
-        format!("console_complete {}", line)
-    };
-
-    // Check if this is a UUID command that might benefit from enhanced completion
-    let is_uuid_command = line.trim_start().starts_with("uuid_") && line.contains(' ');
-
-    // ESL Debug level 6: Log console_complete API calls and responses
-    debug_level.debug_print(EslDebugLevel::Debug6, &format!("ESL API: {}", cmd));
-
-    // Try enhanced UUID completion first for applicable commands
-    if is_uuid_command {
-        if let Ok(Some(enhanced_completions)) = channel_provider.get_uuid_completions(handle).await
-        {
-            debug_level.debug_print(
-                EslDebugLevel::Debug6,
-                &format!(
-                    "Using enhanced UUID completion with {} channels",
-                    enhanced_completions.len()
-                ),
-            );
-            return enhanced_completions;
-        }
-        // If None returned, fall through to default completion
-        debug_level.debug_print(
-            EslDebugLevel::Debug6,
-            "Falling back to default UUID completion",
+        eprintln!(
+            "Failed to connect to FreeSWITCH at {}:{}",
+            config.host, config.port
         );
-    }
-
-    // Execute the API command
-    match handle.api(&cmd).await {
-        Ok(response) => {
-            debug_level.debug_print(
-                EslDebugLevel::Debug6,
-                &format!("ESL Response success: {}", response.is_success()),
-            );
-
-            if let Some(body) = response.body() {
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("ESL Response body (escaped): {:?}", body),
-                );
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("ESL Response body (raw):\n---START---\n{}\n---END---", body),
-                );
-                let parsed_completions = parse_console_complete_response(body);
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("Parsed completions: {:?}", parsed_completions),
-                );
-                parsed_completions
-            } else {
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("ESL Response: no body for command: {}", cmd),
-                );
-                Vec::new()
-            }
-        }
-        Err(e) => {
-            // Log error but don't print to console to avoid interfering with readline
-            tracing::debug!("Failed to get console completions: {}", e);
-            Vec::new()
-        }
-    }
-}
-
-/// Parse the console_complete response from FreeSWITCH
-/// Returns (completion_text, is_uuid_with_info) - if is_uuid_with_info is true,
-/// completion_text should be split for display vs replacement
-fn parse_console_complete_response(body: &str) -> Vec<String> {
-    let mut completions = Vec::new();
-
-    // Parse bracketed completions like [            channels] and [                chat]
-    // FreeSWITCH uses format "[%20s]" so we look for [...] patterns
-    for line in body.lines() {
-        let mut chars = line.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch == '[' {
-                // Found start of bracket, collect until ']'
-                let mut bracket_content = String::new();
-                for inner_ch in chars.by_ref() {
-                    if inner_ch == ']' {
-                        break;
-                    }
-                    bracket_content.push(inner_ch);
-                }
-
-                // Clean up the content (remove padding spaces)
-                let option_text = bracket_content.trim();
-                if !option_text.is_empty() {
-                    completions.push(option_text.to_string());
-                }
-            }
-        }
-    }
-
-    // If we found bracketed completions, use those
-    if !completions.is_empty() {
-        return completions;
-    }
-
-    // Fallback: Handle write= directive only if no bracketed completions found
-    if let Some(write_start) = body.find("write=") {
-        let write_section = &body[write_start + 6..]; // Skip "write="
-        if let Some(colon_pos) = write_section.find(':') {
-            let replacement_text = write_section[colon_pos + 1..].trim_end();
-            if !replacement_text.is_empty() {
-                completions.push(format!("WRITE_DIRECTIVE:{}", replacement_text));
-            }
-        }
-    }
-
-    completions
-}
-
-/// Run the readline loop in a blocking thread
-fn run_readline_loop(
-    cmd_tx: mpsc::UnboundedSender<String>,
-    quit_tx: oneshot::Sender<()>,
-    printer_tx: oneshot::Sender<Arc<Mutex<dyn ExternalPrinter + Send>>>,
-    completion_tx: mpsc::UnboundedSender<CompletionRequest>,
-    config: &AppConfig,
-) -> Result<()> {
-    // Set up readline editor with completion configuration
-    let rl_config = rustyline::Config::builder()
-        .completion_type(rustyline::CompletionType::List)
-        .completion_show_all_if_ambiguous(true) // Show list on first tab
-        .build();
-    let mut rl = Editor::<FsCliCompleter, FileHistory>::with_config(rl_config)?;
-
-    // Create completer and provide completion channel
-    let completer = FsCliCompleter::new_with_completion_channel(completion_tx, config.debug);
-    rl.set_helper(Some(completer));
-
-    // Merge default macros with custom ones
-    let mut macros = get_default_fnkeys();
-    for (key, value) in &config.macros {
-        macros.insert(key.clone(), value.clone());
-    }
-
-    // Set up function key bindings with custom macros
-    setup_function_key_bindings(&mut rl, &macros)?;
-
-    // Create external printer for background log output
-    let printer = rl.create_external_printer()?;
-    let printer_arc = Arc::new(Mutex::new(printer));
-
-    // Send printer to main thread
-    let _ = printer_tx.send(printer_arc);
-
-    // Load history
-    let history_file = config.history_file.clone().unwrap_or_else(|| {
-        let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push(".fs_cli_history");
-        path
-    });
-
-    if history_file.exists() {
-        if let Err(e) = rl.load_history(&history_file) {
-            warn!("Could not load history: {}", e);
-        }
-    }
-
-    // Readline loop
-    loop {
-        let prompt_host = if config.host == "localhost" {
-            gethostname().to_string_lossy().to_string()
-        } else {
-            config.host.clone()
-        };
-        let prompt = format!("freeswitch@{}> ", prompt_host);
-
-        // Check for pending line restoration (from MacroClearLine)
-        let result = if let Some(restore_content) = rl.take_pending_restore() {
-            rl.readline_with_initial(&prompt, (&restore_content, ""))
-        } else {
-            rl.readline(&prompt)
-        };
-
-        match result {
-            Ok(line) => {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-
-                // Add to history
-                let _ = rl.add_history_entry(line);
-
-                // Handle quit commands
-                if matches!(line, "/quit" | "/exit" | "/bye") {
-                    println!("Goodbye!");
-                    let _ = quit_tx.send(());
-                    break;
-                }
-
-                // Handle history command locally (since we have access to rl here)
-                if line == "/history" {
-                    println!("Command History:");
-                    let history = rl.history();
-                    for (i, entry) in history
-                        .iter()
-                        .enumerate()
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .take(20)
-                    {
-                        println!("  {}: {}", i + 1, entry);
-                    }
-                    continue;
-                }
-
-                // Send command to main thread
-                if cmd_tx.send(line.to_string()).is_err() {
-                    break; // Main thread has closed
-                }
-            }
-            Err(rustyline::error::ReadlineError::Interrupted) => {
-                println!("^C");
-                continue;
-            }
-            Err(rustyline::error::ReadlineError::Eof) => {
-                println!("Goodbye!");
-                let _ = quit_tx.send(());
-                break;
-            }
-            Err(e) => {
-                error!("Error reading input: {}", e);
-                break;
-            }
-        }
-    }
-
-    // Save history
-    if let Err(e) = rl.save_history(&history_file) {
-        warn!("Could not save history: {}", e);
-    }
-
-    Ok(())
-}
-
-/// Reason for application shutdown
-#[derive(Debug, Clone)]
-enum ShutdownReason {
-    ConnectionLost,
-}
-
-/// Run interactive CLI mode
-async fn run_interactive_mode(handle: EslHandle, config: &AppConfig) -> Result<()> {
-    let mut processor = CommandProcessor::new(config.color, config.debug);
-
-    // Create channels for communication between rustyline thread and main async thread
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
-    let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
-    let (printer_tx, printer_rx) = oneshot::channel::<Arc<Mutex<dyn ExternalPrinter + Send>>>();
-    let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
-    let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<ShutdownReason>();
-
-    println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
-
-    // Prepare macros for function key parsing
-    let mut macros = get_default_fnkeys();
-    for (key, value) in &config.macros {
-        macros.insert(key.clone(), value.clone());
-    }
-
-    // Spawn rustyline in a blocking thread
-    let config_clone = config.clone();
-    let readline_handle = tokio::task::spawn_blocking(move || {
-        run_readline_loop(cmd_tx, quit_tx, printer_tx, completion_tx, &config_clone)
-    });
-
-    // Wait for external printer to be ready
-    let external_printer = match printer_rx.await {
-        Ok(printer) => Some(printer),
-        Err(_) => {
-            error!("Failed to receive external printer");
-            None
-        }
-    };
-
-    // Set the external printer on the command processor
-    processor.set_printer(external_printer.clone());
-
-    // Create channel provider for enhanced UUID completion
-    let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
-
-    // Wrap handle in Arc<Mutex> for sharing between tasks
-    let handle_arc = Arc::new(Mutex::new(handle));
-    let log_handle = if !config.quiet {
-        let handle_clone = handle_arc.clone();
-        let color_mode = config.color;
-        let printer_clone = external_printer.clone();
-        let config_clone = config.clone();
-        let shutdown_tx_clone = shutdown_tx.clone();
-        Some(tokio::spawn(async move {
-            loop {
-                {
-                    let mut h = handle_clone.lock().await;
-                    if let Err(e) = LogDisplay::check_and_display_logs(
-                        &mut h,
-                        color_mode,
-                        printer_clone.clone(),
-                    )
-                    .await
-                    {
-                        if is_connection_error(&e) {
-                            if config_clone.reconnect {
-                                warn!("Connection lost in log monitoring, attempting reconnect...");
-                                drop(h);
-                                if let Err(reconnect_err) =
-                                    handle_reconnection(&handle_clone, &config_clone).await
-                                {
-                                    warn!("Failed to reconnect in log monitoring: {}", reconnect_err);
-                                }
-                            } else {
-                                error!("Connection to FreeSWITCH lost");
-                                let _ = shutdown_tx_clone.send(ShutdownReason::ConnectionLost);
-                                return;
-                            }
-                        } else {
-                            warn!("Error in background log monitoring: {}", e);
-                        }
-                    }
-                }
-                // Small delay to prevent excessive CPU usage
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        }))
-    } else {
-        None
-    };
-
-    // Track shutdown reason
-    let mut shutdown_reason: Option<ShutdownReason> = None;
-
-    // Main command processing loop
-    loop {
-        tokio::select! {
-            // Handle shutdown signal from background tasks
-            Some(reason) = shutdown_rx.recv() => {
-                shutdown_reason = Some(reason);
-                break;
-            }
-            // Handle commands from readline thread
-            Some(command) = cmd_rx.recv() => {
-                let mut handle = handle_arc.lock().await;
-
-                // Handle client-side commands first (start with /)
-                if command.starts_with('/') {
-                    match command.as_str() {
-                        "/help" => {
-                            processor.show_help().await;
-                            continue;
-                        }
-                        "/clear" => {
-                            // Clear the screen using crossterm
-                            let mut stdout = io::stdout();
-                            let _ = stdout.execute(Clear(ClearType::All));
-                            let _ = stdout.execute(MoveTo(0, 0));
-                            let _ = stdout.flush();
-                            continue;
-                        }
-                        _ => {
-                            // Let the command processor handle other /commands
-                            if let Err(e) = processor.execute_command(&mut handle, &command).await {
-                                if is_connection_error(&e) {
-                                    drop(handle);
-                                    if config.reconnect {
-                                        if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
-                                            processor.handle_error(reconnect_err).await;
-                                            continue;
-                                        }
-                                        // Retry the command after successful reconnection
-                                        let mut handle = handle_arc.lock().await;
-                                        if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
-                                            processor.handle_error(retry_err).await;
-                                        }
-                                    } else {
-                                        error!("Connection to FreeSWITCH lost");
-                                        let _ = shutdown_tx.send(ShutdownReason::ConnectionLost);
-                                        break;
-                                    }
-                                } else {
-                                    processor.handle_error(e).await;
-                                }
-                            }
-                            continue;
-                        }
-                    }
-                }
-
-                // Handle other built-in commands
-                match command.as_str() {
-                    "help" => {
-                        processor.show_help().await;
-                        continue;
-                    }
-                    _ => {
-                        // Check for function key shortcuts (F1-F12) typed manually
-                        if let Some(fn_command) = parse_function_key(&command, &macros) {
-                            if let Err(e) = processor.execute_command(&mut handle, &fn_command).await {
-                                if is_connection_error(&e) {
-                                    drop(handle);
-                                    if config.reconnect {
-                                        if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
-                                            processor.handle_error(reconnect_err).await;
-                                            continue;
-                                        }
-                                        // Retry the command after successful reconnection
-                                        let mut handle = handle_arc.lock().await;
-                                        if let Err(retry_err) = processor.execute_command(&mut handle, &fn_command).await {
-                                            processor.handle_error(retry_err).await;
-                                        }
-                                    } else {
-                                        error!("Connection to FreeSWITCH lost");
-                                        let _ = shutdown_tx.send(ShutdownReason::ConnectionLost);
-                                        break;
-                                    }
-                                } else {
-                                    processor.handle_error(e).await;
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Execute FreeSWITCH command and show output immediately
-                        if let Err(e) = processor.execute_command(&mut handle, &command).await {
-                            if is_connection_error(&e) {
-                                drop(handle);
-                                if config.reconnect {
-                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, config).await {
-                                        processor.handle_error(reconnect_err).await;
-                                        continue;
-                                    }
-                                    // Retry the command after successful reconnection
-                                    let mut handle = handle_arc.lock().await;
-                                    if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
-                                        processor.handle_error(retry_err).await;
-                                    }
-                                } else {
-                                    error!("Connection to FreeSWITCH lost");
-                                    let _ = shutdown_tx.send(ShutdownReason::ConnectionLost);
-                                    break;
-                                }
-                            } else {
-                                processor.handle_error(e).await;
-                            }
-                        }
-                    }
-                }
-            }
-            // Handle completion requests from readline thread
-            Some(request) = completion_rx.recv() => {
-                let mut handle = handle_arc.lock().await;
-                let completions = get_console_complete(&mut handle, &request.line, request.pos, config.debug, &channel_provider).await;
-                // Send the result back (ignore if channel closed)
-                let _ = request.response_tx.send(completions);
-            }
-            // Handle quit signal from readline thread
-            _ = &mut quit_rx => {
-                break;
-            }
-        }
-    }
-
-    // Check for any pending shutdown signals
-    if shutdown_reason.is_none() {
-        if let Ok(reason) = shutdown_rx.try_recv() {
-            shutdown_reason = Some(reason);
-        }
-    }
-
-    // Clean up background tasks
-    if let Some(handle) = log_handle {
-        handle.abort();
-    }
-
-    // Wait for readline thread to finish (abort if we're shutting down due to connection loss)
-    if shutdown_reason.is_some() {
-        readline_handle.abort();
-    }
-    if let Err(e) = readline_handle.await {
-        if !e.is_cancelled() {
-            warn!("Error waiting for readline thread: {}", e);
-        }
-    }
-
-    // Only attempt clean disconnect if not already disconnected
-    if shutdown_reason.is_none() {
-        info!("Disconnecting from FreeSWITCH...");
-
-        match Arc::try_unwrap(handle_arc) {
-            Ok(mutex) => {
-                let mut handle = mutex.into_inner();
-                if let Err(e) = handle.disconnect().await {
-                    warn!("Error during clean disconnect: {}", e);
-                }
-            }
-            Err(arc) => {
-                let mut handle = arc.lock().await;
-                if let Err(e) = handle.disconnect().await {
-                    warn!("Error during disconnect: {}", e);
-                }
-            }
-        }
-    }
-
-    match shutdown_reason {
-        Some(ShutdownReason::ConnectionLost) => {
-            Err(anyhow::anyhow!("Connection to FreeSWITCH lost"))
-        }
-        None => Ok(()),
+        eprintln!("Error: {}", e);
     }
 }
 
@@ -920,20 +302,16 @@ mod tests {
 
     #[test]
     fn test_is_connection_error_with_esl_errors() {
-        // EslError::ConnectionClosed should be detected
         let err: anyhow::Error = EslError::ConnectionClosed.into();
         assert!(is_connection_error(&err));
 
-        // EslError::NotConnected should be detected
         let err: anyhow::Error = EslError::NotConnected.into();
         assert!(is_connection_error(&err));
 
-        // EslError from IO error should be detected
         let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
         let err: anyhow::Error = EslError::from(io_err).into();
         assert!(is_connection_error(&err));
 
-        // Non-connection EslErrors should not be detected
         let err: anyhow::Error = EslError::Timeout { timeout_ms: 1000 }.into();
         assert!(!is_connection_error(&err));
 
@@ -960,7 +338,6 @@ mod tests {
             );
         }
 
-        // Non-connection IO errors should not be detected
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test");
         let err: anyhow::Error = io_err.into();
         assert!(!is_connection_error(&err));

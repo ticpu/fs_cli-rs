@@ -86,7 +86,10 @@ impl Args {
         let args = Self::parse();
 
         // Load configuration
-        let config = FsCliConfig::load(args.config.clone())?;
+        let config = FsCliConfig::load(
+            args.config
+                .clone(),
+        )?;
 
         // Handle --list-profiles
         if args.list_profiles {
@@ -100,7 +103,10 @@ impl Args {
         }
 
         // Get profile name (default to "default")
-        let profile_name = args.profile.as_deref().unwrap_or("default");
+        let profile_name = args
+            .profile
+            .as_deref()
+            .unwrap_or("default");
 
         // Load profile configuration
         let mut app_config = match config.get_profile(profile_name) {

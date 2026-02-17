@@ -1,7 +1,7 @@
 //! Channel information management for enhanced UUID completion
 
 use anyhow::Result;
-use freeswitch_esl_rs::EslHandle;
+use freeswitch_esl_rs::EslClient;
 use serde::{Deserialize, Serialize};
 
 /// Channel information from FreeSWITCH JSON output
@@ -39,12 +39,11 @@ impl ChannelProvider {
     /// Get enhanced UUID completions with channel info
     /// Returns formatted strings like: "uuid timestamp name (state)"
     /// Returns None if should fallback to default completion (too many channels)
-    pub async fn get_uuid_completions(
-        &self,
-        handle: &mut EslHandle,
-    ) -> Result<Option<Vec<String>>> {
+    pub async fn get_uuid_completions(&self, client: &EslClient) -> Result<Option<Vec<String>>> {
         // First check channel count to avoid flooding
-        let count = self.get_channel_count(handle).await?;
+        let count = self
+            .get_channel_count(client)
+            .await?;
 
         if count == 0 {
             return Ok(Some(Vec::new()));
@@ -60,7 +59,9 @@ impl ChannelProvider {
         }
 
         // Fetch channel details
-        let channels = self.get_channels(handle).await?;
+        let channels = self
+            .get_channels(client)
+            .await?;
 
         // Format for completion display
         let mut completions = Vec::new();
@@ -76,8 +77,10 @@ impl ChannelProvider {
     }
 
     /// Get channel count using "show channels count as json"
-    async fn get_channel_count(&self, handle: &mut EslHandle) -> Result<u32> {
-        let response = handle.api("show channels count as json").await?;
+    async fn get_channel_count(&self, client: &EslClient) -> Result<u32> {
+        let response = client
+            .api("show channels count as json")
+            .await?;
 
         if !response.is_success() {
             return Ok(0);
@@ -91,8 +94,10 @@ impl ChannelProvider {
     }
 
     /// Get channel details using "show channels as json"
-    async fn get_channels(&self, handle: &mut EslHandle) -> Result<Vec<ChannelInfo>> {
-        let response = handle.api("show channels as json").await?;
+    async fn get_channels(&self, client: &EslClient) -> Result<Vec<ChannelInfo>> {
+        let response = client
+            .api("show channels as json")
+            .await?;
 
         if !response.is_success() {
             return Ok(Vec::new());
@@ -104,8 +109,14 @@ impl ChannelProvider {
                 let mut channels = channels_response.rows;
                 // Sort by created_epoch (newest first)
                 channels.sort_by(|a, b| {
-                    let a_epoch: u64 = a.created_epoch.parse().unwrap_or(0);
-                    let b_epoch: u64 = b.created_epoch.parse().unwrap_or(0);
+                    let a_epoch: u64 = a
+                        .created_epoch
+                        .parse()
+                        .unwrap_or(0);
+                    let b_epoch: u64 = b
+                        .created_epoch
+                        .parse()
+                        .unwrap_or(0);
                     b_epoch.cmp(&a_epoch)
                 });
                 Ok(channels)

@@ -1,7 +1,7 @@
 //! Tab completion support for fs_cli-rs
 
 use crate::esl_debug::EslDebugLevel;
-use crate::CompletionRequest;
+use crate::readline::CompletionRequest;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
@@ -27,15 +27,28 @@ fn find_common_prefix(strings: &[&str]) -> String {
     let first = strings[0];
     let mut prefix_len = 0;
 
-    for (i, ch) in first.chars().enumerate() {
-        if strings.iter().all(|s| s.chars().nth(i) == Some(ch)) {
+    for (i, ch) in first
+        .chars()
+        .enumerate()
+    {
+        if strings
+            .iter()
+            .all(|s| {
+                s.chars()
+                    .nth(i)
+                    == Some(ch)
+            })
+        {
             prefix_len = i + 1;
         } else {
             break;
         }
     }
 
-    first.chars().take(prefix_len).collect()
+    first
+        .chars()
+        .take(prefix_len)
+        .collect()
 }
 
 /// FreeSWITCH CLI completer with command suggestions
@@ -213,17 +226,18 @@ impl FsCliCompleter {
 
     /// Get ESL-based completions from FreeSWITCH
     fn get_esl_completions(&self, line: &str, pos: usize) -> Vec<String> {
-        self.debug_level.debug_print(
-            EslDebugLevel::Debug6,
-            &format!("get_esl_completions called for '{}' pos {}", line, pos),
-        );
+        self.debug_level
+            .debug_print(
+                EslDebugLevel::Debug6,
+                &format!("get_esl_completions called for '{}' pos {}", line, pos),
+            );
 
         if let Some(completion_tx) = &self.completion_tx {
             self.debug_level
                 .debug_print(EslDebugLevel::Debug6, "Have completion channel");
 
             // Create a channel to receive the response
-            let (response_tx, response_rx) = oneshot::channel();
+            let (response_tx, response_rx) = oneshot::channel::<Vec<String>>();
 
             // Send completion request to main thread
             let request = CompletionRequest {
@@ -232,16 +246,20 @@ impl FsCliCompleter {
                 response_tx,
             };
 
-            if completion_tx.send(request).is_err() {
+            if completion_tx
+                .send(request)
+                .is_err()
+            {
                 self.debug_level
                     .debug_print(EslDebugLevel::Debug6, "Failed to send completion request");
                 return Vec::new();
             }
 
-            self.debug_level.debug_print(
-                EslDebugLevel::Debug6,
-                "Sent completion request, waiting for response...",
-            );
+            self.debug_level
+                .debug_print(
+                    EslDebugLevel::Debug6,
+                    "Sent completion request, waiting for response...",
+                );
 
             // Wait for response with timeout (blocking call from sync context)
             // We use a thread spawn to handle async within sync context
@@ -258,10 +276,11 @@ impl FsCliCompleter {
             .join()
             {
                 Ok(Some(completions)) => {
-                    self.debug_level.debug_print(
-                        EslDebugLevel::Debug6,
-                        &format!("Received completions: {:?}", completions),
-                    );
+                    self.debug_level
+                        .debug_print(
+                            EslDebugLevel::Debug6,
+                            &format!("Received completions: {:?}", completions),
+                        );
                     completions
                 }
                 Ok(None) => {
@@ -270,10 +289,11 @@ impl FsCliCompleter {
                     Vec::new()
                 }
                 Err(e) => {
-                    self.debug_level.debug_print(
-                        EslDebugLevel::Debug6,
-                        &format!("Thread join error: {:?}", e),
-                    );
+                    self.debug_level
+                        .debug_print(
+                            EslDebugLevel::Debug6,
+                            &format!("Thread join error: {:?}", e),
+                        );
                     Vec::new()
                 }
             }
@@ -303,7 +323,10 @@ impl Completer for FsCliCompleter {
         ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         // Skip ESL completion for client-side commands (starting with /)
-        if !line.trim_start().starts_with('/') {
+        if !line
+            .trim_start()
+            .starts_with('/')
+        {
             // Try ESL completion first for FreeSWITCH commands
             let esl_completions = self.get_esl_completions(line, pos);
 
@@ -328,7 +351,10 @@ impl Completer for FsCliCompleter {
                             replacement: replacement_text.to_string(),
                         });
                     } else if completion.len() > UUID_LEN
-                        && completion.chars().nth(UUID_LEN) == Some(' ')
+                        && completion
+                            .chars()
+                            .nth(UUID_LEN)
+                            == Some(' ')
                         && completion
                             .chars()
                             .take(UUID_LEN)
@@ -357,13 +383,23 @@ impl Completer for FsCliCompleter {
                 if candidates.len() == 1 {
                     // Single candidate - add trailing space like C readline
                     let candidate = &mut candidates[0];
-                    if !candidate.replacement.ends_with(' ') {
-                        candidate.replacement.push(' ');
+                    if !candidate
+                        .replacement
+                        .ends_with(' ')
+                    {
+                        candidate
+                            .replacement
+                            .push(' ');
                     }
                 } else if candidates.len() > 1 {
                     // Multiple candidates - need to calculate common prefix and adjust replacements
-                    let completions: Vec<&str> =
-                        candidates.iter().map(|c| c.display.as_str()).collect();
+                    let completions: Vec<&str> = candidates
+                        .iter()
+                        .map(|c| {
+                            c.display
+                                .as_str()
+                        })
+                        .collect();
                     let common_prefix = find_common_prefix(&completions);
 
                     if common_prefix.len() > current_word.len() {
@@ -389,14 +425,21 @@ impl Completer for FsCliCompleter {
         // Add trailing space for single static completions
         if candidates.len() == 1 {
             let candidate = &mut candidates[0];
-            if !candidate.replacement.ends_with(' ') {
-                candidate.replacement.push(' ');
+            if !candidate
+                .replacement
+                .ends_with(' ')
+            {
+                candidate
+                    .replacement
+                    .push(' ');
             }
         }
 
         // If no command matches and we're completing a path-like string, try filename completion
         if candidates.is_empty() && (line.contains('/') || line.contains('\\')) {
-            let (file_start, file_candidates) = self.filename_completer.complete(line, pos, ctx)?;
+            let (file_start, file_candidates) = self
+                .filename_completer
+                .complete(line, pos, ctx)?;
             return Ok((file_start, file_candidates));
         }
 
@@ -408,7 +451,8 @@ impl Hinter for FsCliCompleter {
     type Hint = String;
 
     fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<Self::Hint> {
-        self.history_hinter.hint(line, pos, ctx)
+        self.history_hinter
+            .hint(line, pos, ctx)
     }
 }
 
@@ -430,11 +474,13 @@ impl Highlighter for FsCliCompleter {
     }
 
     fn highlight<'l>(&self, line: &'l str, pos: usize) -> Cow<'l, str> {
-        self.bracket_highlighter.highlight(line, pos)
+        self.bracket_highlighter
+            .highlight(line, pos)
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
-        self.bracket_highlighter.highlight_char(line, pos, kind)
+        self.bracket_highlighter
+            .highlight_char(line, pos, kind)
     }
 }
 
@@ -443,10 +489,12 @@ impl Validator for FsCliCompleter {
         &self,
         ctx: &mut validate::ValidationContext,
     ) -> rustyline::Result<validate::ValidationResult> {
-        self.bracket_validator.validate(ctx)
+        self.bracket_validator
+            .validate(ctx)
     }
 
     fn validate_while_typing(&self) -> bool {
-        self.bracket_validator.validate_while_typing()
+        self.bracket_validator
+            .validate_while_typing()
     }
 }

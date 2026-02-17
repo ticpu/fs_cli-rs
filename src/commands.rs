@@ -3,7 +3,7 @@
 use crate::esl_debug::EslDebugLevel;
 use anyhow::{Error, Result};
 use colored::*;
-use freeswitch_esl_rs::{command::EslCommand, EslHandle};
+use freeswitch_esl_rs::{command::EslCommand, EslClient};
 use rustyline::ExternalPrinter;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -21,7 +21,10 @@ impl FromStr for ColorMode {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, String> {
-        match s.to_lowercase().as_str() {
+        match s
+            .to_lowercase()
+            .as_str()
+        {
             "never" => Ok(ColorMode::Never),
             "tag" => Ok(ColorMode::Tag),
             "line" => Ok(ColorMode::Line),
@@ -71,7 +74,10 @@ impl FromStr for LogLevel {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, String> {
-        match s.to_lowercase().as_str() {
+        match s
+            .to_lowercase()
+            .as_str()
+        {
             "console" => Ok(LogLevel::Console),
             "alert" => Ok(LogLevel::Alert),
             "crit" => Ok(LogLevel::Crit),
@@ -149,7 +155,10 @@ impl LogLevel {
 
     /// Get help text with all available levels
     pub fn help_text() -> String {
-        let levels: Vec<&str> = Self::all_variants().iter().map(|l| l.as_str()).collect();
+        let levels: Vec<&str> = Self::all_variants()
+            .iter()
+            .map(|l| l.as_str())
+            .collect();
         format!(
             "Usage: /log <level>\nAvailable levels: {}",
             levels.join(", ")
@@ -215,44 +224,70 @@ impl CommandProcessor {
     /// Handle command execution errors with proper formatting
     pub async fn handle_error(&self, error: Error) {
         let error_msg = if !self.no_color() {
-            format!("{}: {}", "Error".red().bold(), error)
+            format!(
+                "{}: {}",
+                "Error"
+                    .red()
+                    .bold(),
+                error
+            )
         } else {
             format!("Error: {}", error)
         };
-        self.print_error(&error_msg).await;
+        self.print_error(&error_msg)
+            .await;
     }
 
     /// Execute a FreeSWITCH command
-    pub async fn execute_command(&self, handle: &mut EslHandle, command: &str) -> Result<()> {
-        self.debug_level.debug_print(
-            EslDebugLevel::Debug5,
-            &format!("execute_command called with: '{}'", command),
-        );
+    pub async fn execute_command(&self, client: &EslClient, command: &str) -> Result<()> {
+        self.debug_level
+            .debug_print(
+                EslDebugLevel::Debug5,
+                &format!("execute_command called with: '{}'", command),
+            );
 
         // Handle special commands
-        if let Some(result) = self.handle_special_command(handle, command).await? {
-            self.print_message(&result).await;
+        if let Some(result) = self
+            .handle_special_command(client, command)
+            .await?
+        {
+            self.print_message(&result)
+                .await;
             return Ok(());
         }
 
         // Execute as API command
-        match handle.api(command).await {
+        match client
+            .api(command)
+            .await
+        {
             Ok(response) => {
                 if !response.is_success() {
                     if let Some(reply) = response.reply_text() {
                         let error_msg = if !self.no_color() {
-                            format!("{}: {}", "API Error".red().bold(), reply)
+                            format!(
+                                "{}: {}",
+                                "API Error"
+                                    .red()
+                                    .bold(),
+                                reply
+                            )
                         } else {
                             format!("API Error: {}", reply)
                         };
-                        self.print_error(&error_msg).await;
+                        self.print_error(&error_msg)
+                            .await;
                         return Ok(()); // Don't treat API errors as fatal
                     }
                 }
 
                 let body = response.body_string();
-                if !body.trim().is_empty() {
-                    self.print_message(&body).await;
+                if !body
+                    .trim()
+                    .is_empty()
+                {
+                    self.print_message(&body)
+                        .await;
                 }
             }
             Err(e) => {
@@ -266,54 +301,75 @@ impl CommandProcessor {
     /// Handle special CLI commands that need custom processing
     async fn handle_special_command(
         &self,
-        handle: &mut EslHandle,
+        client: &EslClient,
         command: &str,
     ) -> Result<Option<String>> {
-        let parts: Vec<&str> = command.split_whitespace().collect();
+        let parts: Vec<&str> = command
+            .split_whitespace()
+            .collect();
         if parts.is_empty() {
-            self.debug_level.debug_print(
-                EslDebugLevel::Debug6,
-                "handle_special_command: empty command",
-            );
+            self.debug_level
+                .debug_print(
+                    EslDebugLevel::Debug6,
+                    "handle_special_command: empty command",
+                );
             return Ok(None);
         }
 
-        self.debug_level.debug_print(
-            EslDebugLevel::Debug5,
-            &format!("handle_special_command: parts[0] = '{}'", parts[0]),
-        );
+        self.debug_level
+            .debug_print(
+                EslDebugLevel::Debug5,
+                &format!("handle_special_command: parts[0] = '{}'", parts[0]),
+            );
 
         match parts[0] {
             "/log" => {
                 self.debug_level
                     .debug_print(EslDebugLevel::Debug6, "Matched /log command");
-                self.handle_log_command(handle, &parts[1..]).await
+                self.handle_log_command(client, &parts[1..])
+                    .await
             }
-            _ => match parts[0].to_lowercase().as_str() {
-                "show" if parts.len() > 1 => self.handle_show_command(handle, &parts[1..]).await,
+            _ => match parts[0]
+                .to_lowercase()
+                .as_str()
+            {
+                "show" if parts.len() > 1 => {
+                    self.handle_show_command(client, &parts[1..])
+                        .await
+                }
                 "status" => {
-                    let response = handle.api("status").await?;
+                    let response = client
+                        .api("status")
+                        .await?;
                     Ok(Some(response.body_string()))
                 }
                 "version" => {
-                    let response = handle.api("version").await?;
+                    let response = client
+                        .api("version")
+                        .await?;
                     Ok(Some(response.body_string()))
                 }
                 "uptime" => {
-                    let response = handle.api("status").await?;
+                    let response = client
+                        .api("status")
+                        .await?;
                     Ok(Some(self.extract_uptime(&response.body_string())))
                 }
                 "reload" => {
                     if parts.len() > 1 {
                         let module = parts[1];
-                        let response = handle.api(&format!("reload {}", module)).await?;
+                        let response = client
+                            .api(&format!("reload {}", module))
+                            .await?;
                         Ok(Some(format!(
                             "Reloaded module: {}\n{}",
                             module,
                             response.body_string()
                         )))
                     } else {
-                        let response = handle.api("reloadxml").await?;
+                        let response = client
+                            .api("reloadxml")
+                            .await?;
                         Ok(Some(format!(
                             "Reloaded XML configuration\n{}",
                             response.body_string()
@@ -323,7 +379,9 @@ impl CommandProcessor {
                 "originate" => {
                     if parts.len() >= 3 {
                         let call_string = parts[1..].join(" ");
-                        let response = handle.api(&format!("originate {}", call_string)).await?;
+                        let response = client
+                            .api(&format!("originate {}", call_string))
+                            .await?;
                         Ok(Some(format!(
                             "Originate command executed\n{}",
                             response.body_string()
@@ -342,7 +400,7 @@ impl CommandProcessor {
     /// Handle /log command with various log levels
     async fn handle_log_command(
         &self,
-        handle: &mut EslHandle,
+        client: &EslClient,
         parts: &[&str],
     ) -> Result<Option<String>> {
         if parts.is_empty() {
@@ -361,10 +419,14 @@ impl CommandProcessor {
             }
         } else {
             EslCommand::Log {
-                level: log_level.as_str().to_string(),
+                level: log_level
+                    .as_str()
+                    .to_string(),
             }
         };
-        let response = handle.send_command(cmd).await?;
+        let response = client
+            .send_command(cmd)
+            .await?;
 
         if response.is_success() {
             Ok(Some(format!(
@@ -386,7 +448,7 @@ impl CommandProcessor {
     /// Handle 'show' commands with enhanced formatting
     async fn handle_show_command(
         &self,
-        handle: &mut EslHandle,
+        client: &EslClient,
         parts: &[&str],
     ) -> Result<Option<String>> {
         if parts.is_empty() {
@@ -397,7 +459,9 @@ impl CommandProcessor {
 
         let command = format!("show {}", parts.join(" "));
 
-        let response = handle.api(&command).await?;
+        let response = client
+            .api(&command)
+            .await?;
         Ok(Some(response.body_string()))
     }
 
@@ -407,7 +471,9 @@ impl CommandProcessor {
             if line.contains("UP")
                 && (line.contains("years") || line.contains("days") || line.contains("hours"))
             {
-                return line.trim().to_string();
+                return line
+                    .trim()
+                    .to_string();
             }
         }
         "Uptime information not found".to_string()
@@ -464,6 +530,7 @@ Use Tab for command completion and Up/Down arrows for history.
         } else {
             help_text.to_string()
         };
-        self.print_message(&formatted_help).await;
+        self.print_message(&formatted_help)
+            .await;
     }
 }

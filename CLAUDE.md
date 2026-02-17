@@ -23,9 +23,16 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 
 ## Project Structure
 - Binary: `fs_cli` (see `Cargo.toml`)
-- Main: `src/main.rs`
-- Config system: `src/config.rs` + `src/args.rs` (YAML profiles, see `fs_cli.yaml`)
-- Commands: `src/commands.rs`
+- `src/main.rs` — entry point, connection helpers, error formatting
+- `src/session.rs` — interactive session loop, event consumer, reconnection
+- `src/readline.rs` — readline thread, function keys, CompletionRequest
+- `src/commands.rs` — command execution and formatting
+- `src/console_complete.rs` — FreeSWITCH console_complete API
+- `src/completion.rs` — tab completion (rustyline helper)
+- `src/channel_info.rs` — UUID completion from channel list
+- `src/log_display.rs` — log event formatting and display
+- `src/config.rs` + `src/args.rs` — YAML profiles, CLI args (see `fs_cli.yaml`)
+- `src/esl_debug.rs` — client-side debug levels (0-7)
 - Multi-arch releases: Linux AMD64/ARM64, Windows AMD64
 - Release naming: `fs_cli_${version}_{amd64|arm64}.debian-compatible`, `fs_cli_${version}_amd64.windows.exe`
 

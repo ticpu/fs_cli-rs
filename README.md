@@ -181,6 +181,42 @@ cargo run -- --help
 cargo run -- -H localhost status
 ```
 
+## Migration from freeswitch-esl-rs 0.1.4 to 0.1.5
+
+The `freeswitch-esl-rs` library was redesigned with breaking API changes. The old
+`EslHandle` (single monolithic connection object requiring `&mut self`) has been
+replaced by a split reader/writer architecture.
+
+### API changes
+
+| Old (0.1.4) | New (0.1.5) |
+|---|---|
+| `EslHandle::connect(host, port, pass)` returns `EslHandle` | `EslClient::connect(host, port, pass)` returns `(EslClient, EslEventStream)` |
+| `handle.api(cmd)` takes `&mut self` | `client.api(cmd)` takes `&self` |
+| `handle.send_command(cmd)` takes `&mut self` | `client.send_command(cmd)` takes `&self` |
+| `handle.subscribe_events(...)` takes `&mut self` | `client.subscribe_events(...)` takes `&self` |
+| `handle.recv_event()` polling | `events.recv().await` on `EslEventStream` |
+| `handle.disconnect()` takes `&mut self` | `client.disconnect()` takes `&self` |
+
+### Key architectural differences
+
+- **`EslClient` is Clone + Send**: no `Arc<Mutex<>>` wrapper needed for sharing
+  between tasks. Just clone it.
+- **Events are push-based**: a background reader task delivers events through a
+  bounded `mpsc` channel. No more polling `recv_event()` in a loop.
+- **Connection status**: `client.is_connected()`, `client.status()`, and
+  `EslEventStream::recv()` returning `None` all signal disconnection.
+- **Liveness detection**: `client.set_liveness_timeout(Duration)` enables
+  heartbeat-based dead connection detection.
+- **Correct wire format**: event headers are now properly percent-decoded from the
+  two-part FreeSWITCH envelope format.
+
+### New types
+
+- `ConnectionStatus` — `Connected` or `Disconnected(DisconnectReason)`
+- `DisconnectReason` — `ServerNotice`, `HeartbeatExpired`, `IoError(String)`,
+  `ConnectionClosed`, `ClientRequested`
+
 ## License
 
-Same as parent project (MIT OR Apache-2.0).
+MPL-2.0

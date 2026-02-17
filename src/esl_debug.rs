@@ -107,5 +107,7 @@ static GLOBAL_DEBUG_LEVEL: OnceLock<EslDebugLevel> = OnceLock::new();
 
 /// Initialize the global debug level (should be called once at startup)
 pub fn init_global_debug_level(level: EslDebugLevel) {
-    GLOBAL_DEBUG_LEVEL.set(level).ok();
+    GLOBAL_DEBUG_LEVEL
+        .set(level)
+        .ok();
 }

@@ -110,35 +110,63 @@ impl ProfileConfig {
     /// Convert to typed values for application use
     pub fn to_app_config(&self) -> Result<AppConfig> {
         Ok(AppConfig {
-            host: self.host.clone().unwrap_or_else(|| "localhost".to_string()),
-            port: self.port.unwrap_or(8021),
+            host: self
+                .host
+                .clone()
+                .unwrap_or_else(|| "localhost".to_string()),
+            port: self
+                .port
+                .unwrap_or(8021),
             password: self
                 .password
                 .clone()
                 .unwrap_or_else(|| "ClueCon".to_string()),
-            user: self.user.clone(),
-            debug: crate::esl_debug::EslDebugLevel::from_u8(self.debug.unwrap_or(0))?,
+            user: self
+                .user
+                .clone(),
+            debug: crate::esl_debug::EslDebugLevel::from_u8(
+                self.debug
+                    .unwrap_or(0),
+            )?,
             color: self
                 .color
                 .as_deref()
                 .unwrap_or("line")
                 .parse::<ColorMode>()
                 .map_err(|e| anyhow::anyhow!("Invalid color mode: {}", e))?,
-            history_file: self.history_file.as_ref().map(PathBuf::from),
-            timeout: self.timeout.unwrap_or(2000),
-            retry: self.retry.unwrap_or(false),
-            reconnect: self.reconnect.unwrap_or(false),
-            events: self.events.unwrap_or(false),
+            history_file: self
+                .history_file
+                .as_ref()
+                .map(PathBuf::from),
+            timeout: self
+                .timeout
+                .unwrap_or(2000),
+            retry: self
+                .retry
+                .unwrap_or(false),
+            reconnect: self
+                .reconnect
+                .unwrap_or(false),
+            events: self
+                .events
+                .unwrap_or(false),
             log_level: self
                 .log_level
                 .as_deref()
                 .unwrap_or("debug")
                 .parse::<LogLevel>()
                 .map_err(|e| anyhow::anyhow!("Invalid log level: {}", e))?,
-            quiet: self.quiet.unwrap_or(false),
-            macros: self.macros.clone().unwrap_or_default(),
+            quiet: self
+                .quiet
+                .unwrap_or(false),
+            macros: self
+                .macros
+                .clone()
+                .unwrap_or_default(),
             execute: Vec::new(), // Always empty from config, filled by CLI args
-            max_auto_complete_uuid: self.max_auto_complete_uuid.unwrap_or(32),
+            max_auto_complete_uuid: self
+                .max_auto_complete_uuid
+                .unwrap_or(32),
         })
     }
 }
@@ -232,7 +260,10 @@ impl FsCliConfig {
 
     /// Get list of available profile names
     pub fn get_profile_names(&self) -> Vec<String> {
-        self.fs_cli.keys().cloned().collect()
+        self.fs_cli
+            .keys()
+            .cloned()
+            .collect()
     }
 }
 
@@ -270,27 +301,35 @@ fs_cli:
         let config: FsCliConfig = serde_yaml::from_str(yaml_content).unwrap();
 
         // Test true profile
-        let true_profile = config.get_profile("test_true").unwrap();
+        let true_profile = config
+            .get_profile("test_true")
+            .unwrap();
         assert_eq!(true_profile.retry, Some(true));
         assert_eq!(true_profile.reconnect, Some(true));
         assert_eq!(true_profile.events, Some(true));
         assert_eq!(true_profile.quiet, Some(true));
 
         // Test false profile
-        let false_profile = config.get_profile("test_false").unwrap();
+        let false_profile = config
+            .get_profile("test_false")
+            .unwrap();
         assert_eq!(false_profile.retry, Some(false));
         assert_eq!(false_profile.reconnect, Some(false));
         assert_eq!(false_profile.events, Some(false));
         assert_eq!(false_profile.quiet, Some(false));
 
         // Test to_app_config conversion
-        let true_app_config = true_profile.to_app_config().unwrap();
+        let true_app_config = true_profile
+            .to_app_config()
+            .unwrap();
         assert_eq!(true_app_config.retry, true);
         assert_eq!(true_app_config.reconnect, true);
         assert_eq!(true_app_config.events, true);
         assert_eq!(true_app_config.quiet, true);
 
-        let false_app_config = false_profile.to_app_config().unwrap();
+        let false_app_config = false_profile
+            .to_app_config()
+            .unwrap();
         assert_eq!(false_app_config.retry, false);
         assert_eq!(false_app_config.reconnect, false);
         assert_eq!(false_app_config.events, false);
