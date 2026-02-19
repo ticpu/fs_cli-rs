@@ -155,12 +155,19 @@ fn spawn_event_consumer(
     color_mode: crate::commands::ColorMode,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        while let Some(event) = events
+        while let Some(result) = events
             .recv()
             .await
         {
-            if LogDisplay::is_log_event(&event) {
-                LogDisplay::display_log_event(&event, color_mode, &printer).await;
+            match result {
+                Ok(event) => {
+                    if LogDisplay::is_log_event(&event) {
+                        LogDisplay::display_log_event(&event, color_mode, &printer).await;
+                    }
+                }
+                Err(e) => {
+                    warn!("Event stream error: {}", e);
+                }
             }
         }
     })
