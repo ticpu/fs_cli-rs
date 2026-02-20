@@ -1,7 +1,7 @@
 //! Channel information management for enhanced UUID completion
 
 use anyhow::Result;
-use freeswitch_esl_rs::EslClient;
+use freeswitch_esl_tokio::EslClient;
 use serde::{Deserialize, Serialize};
 
 /// Channel information from FreeSWITCH JSON output

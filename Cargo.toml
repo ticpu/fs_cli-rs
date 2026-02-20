@@ -11,7 +11,7 @@ name = "fs_cli"
 path = "src/main.rs"
 
 [dependencies]
-freeswitch-esl-rs = { git = "https://github.com/ticpu/freeswitch-esl-rs.git" }
+freeswitch-esl-tokio = { git = "https://github.com/ticpu/freeswitch-esl-tokio.git" }
 tokio = { version = "1.0", features = ["full"] }
 clap = { version = "4.0", features = ["derive"] }
 rustyline = { git = "https://github.com/ticpu/rustyline.git", branch = "feature/cmd-macro" }

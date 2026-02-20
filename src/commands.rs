@@ -3,7 +3,7 @@
 use crate::esl_debug::EslDebugLevel;
 use anyhow::{Error, Result};
 use colored::*;
-use freeswitch_esl_rs::{command::EslCommand, EslClient};
+use freeswitch_esl_tokio::{command::EslCommand, EslClient};
 use rustyline::ExternalPrinter;
 use std::str::FromStr;
 use std::sync::Arc;

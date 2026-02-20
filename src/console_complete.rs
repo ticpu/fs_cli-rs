@@ -2,7 +2,7 @@
 
 use crate::channel_info::ChannelProvider;
 use crate::esl_debug::EslDebugLevel;
-use freeswitch_esl_rs::EslClient;
+use freeswitch_esl_tokio::EslClient;
 
 /// Get console completions from FreeSWITCH using the console_complete API
 pub async fn get_console_complete(

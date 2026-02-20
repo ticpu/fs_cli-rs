@@ -1,7 +1,7 @@
 //! fs_cli-rs: Interactive FreeSWITCH CLI client using ESL
 
 use anyhow::{Context, Result};
-use freeswitch_esl_rs::{EslClient, EslError, EslEventStream, EslEventType, EventFormat};
+use freeswitch_esl_tokio::{EslClient, EslError, EslEventStream, EslEventType, EventFormat};
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
@@ -195,7 +195,7 @@ pub async fn enable_logging(
 ) -> Result<()> {
     info!("Enabling logging at level: {}", log_level.as_str());
 
-    use freeswitch_esl_rs::command::EslCommand;
+    use freeswitch_esl_tokio::command::EslCommand;
 
     let cmd = if log_level == crate::commands::LogLevel::NoLog {
         EslCommand::Api {

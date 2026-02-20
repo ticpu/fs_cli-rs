@@ -2,7 +2,7 @@
 
 use crate::commands::ColorMode;
 use colored::*;
-use freeswitch_esl_rs::EslEvent;
+use freeswitch_esl_tokio::EslEvent;
 use rustyline::ExternalPrinter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
