@@ -17,7 +17,7 @@ use tracing::{error, warn};
 pub struct CompletionRequest {
     pub line: String,
     pub pos: usize,
-    pub response_tx: oneshot::Sender<Vec<String>>,
+    pub response_tx: std::sync::mpsc::SyncSender<Vec<String>>,
 }
 
 /// Default FreeSWITCH function key bindings

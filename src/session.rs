@@ -15,18 +15,19 @@ use crossterm::{
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use freeswitch_esl_tokio::{EslClient, EslEventStream};
+use freeswitch_esl_tokio::{ConnectionStatus, EslClient, EslEventStream, EslEventType};
 use rustyline::ExternalPrinter;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
+use tokio::time::Duration;
 use tracing::{error, info, warn};
 
 /// Why the command loop exited
 enum SessionEnd {
     Quit,
-    Disconnected,
+    Disconnected(Option<String>),
 }
 
 /// Run interactive CLI mode with reconnection support
@@ -43,6 +44,7 @@ pub async fn run_interactive_mode(
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
 
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
+    client.set_liveness_timeout(Duration::from_secs(30));
 
     let macros = build_macros(config);
 
@@ -81,6 +83,11 @@ pub async fn run_interactive_mode(
 
         event_task.abort();
 
+        let dropped = client.dropped_event_count();
+        if dropped > 0 {
+            warn!("{} events dropped due to full queue", dropped);
+        }
+
         match result {
             SessionEnd::Quit => {
                 client
@@ -89,16 +96,24 @@ pub async fn run_interactive_mode(
                     .ok();
                 break Ok(());
             }
-            SessionEnd::Disconnected => {
+            SessionEnd::Disconnected(reason) => {
                 if !config.reconnect {
-                    break Err(anyhow::anyhow!("Connection to FreeSWITCH lost"));
+                    let msg = match &reason {
+                        Some(r) => format!("Connection to FreeSWITCH lost: {}", r),
+                        None => "Connection to FreeSWITCH lost".to_string(),
+                    };
+                    break Err(anyhow::anyhow!(msg));
                 }
-                warn!("Connection lost, reconnecting...");
+                match &reason {
+                    Some(r) => warn!("Connection lost ({}), reconnecting...", r),
+                    None => warn!("Connection lost, reconnecting..."),
+                }
                 match reconnect_loop(config).await {
                     Ok((new_client, new_events)) => {
                         client = new_client;
                         events = new_events;
                         setup_subscriptions(&client, config).await;
+                        client.set_liveness_timeout(Duration::from_secs(30));
                         continue;
                     }
                     Err(e) => break Err(e),
@@ -148,7 +163,56 @@ async fn reconnect_loop(config: &AppConfig) -> Result<(EslClient, EslEventStream
     }
 }
 
-/// Spawn a task that consumes events and displays log messages
+fn format_channel_event(
+    event: &freeswitch_esl_tokio::EslEvent,
+    color_mode: crate::commands::ColorMode,
+) -> Option<String> {
+    let event_type = event.event_type()?;
+
+    let label = match event_type {
+        EslEventType::ChannelCreate => "CREATE",
+        EslEventType::ChannelAnswer => "ANSWER",
+        EslEventType::ChannelHangup => "HANGUP",
+        EslEventType::Heartbeat => return None,
+        _ => return None,
+    };
+
+    let channel = event.channel_name().unwrap_or("unknown");
+    let uuid = event.unique_id().unwrap_or("?");
+
+    let line = if event_type == EslEventType::ChannelHangup {
+        let cause = event.hangup_cause().unwrap_or("UNKNOWN");
+        format!("[{}] {} {} ({})", label, uuid, channel, cause)
+    } else {
+        let cid_num = event.caller_id_number().unwrap_or("");
+        let cid_name = event.caller_id_name().unwrap_or("");
+        if !cid_num.is_empty() || !cid_name.is_empty() {
+            format!("[{}] {} {} <{}> {}", label, uuid, channel, cid_num, cid_name)
+        } else {
+            format!("[{}] {} {}", label, uuid, channel)
+        }
+    };
+
+    Some(match color_mode {
+        crate::commands::ColorMode::Never => line,
+        _ => format!("\x1b[36m{}\x1b[0m", line),
+    })
+}
+
+fn print_to_printer(
+    printer: &Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
+    message: String,
+) {
+    if let Some(printer_arc) = printer {
+        if let Ok(mut p) = printer_arc.try_lock() {
+            let _ = p.print(message);
+            return;
+        }
+    }
+    println!("{}", message);
+}
+
+/// Spawn a task that consumes events and displays log/channel messages
 fn spawn_event_consumer(
     mut events: EslEventStream,
     printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
@@ -161,7 +225,9 @@ fn spawn_event_consumer(
         {
             match result {
                 Ok(event) => {
-                    if LogDisplay::is_log_event(&event) {
+                    if let Some(msg) = format_channel_event(&event, color_mode) {
+                        print_to_printer(&printer, msg);
+                    } else if LogDisplay::is_log_event(&event) {
                         LogDisplay::display_log_event(&event, color_mode, &printer).await;
                     }
                 }
@@ -188,9 +254,12 @@ async fn run_command_loop(
 ) -> SessionEnd {
     loop {
         tokio::select! {
-            // Event consumer finished = connection lost
             _ = &mut *event_task => {
-                return SessionEnd::Disconnected;
+                let reason = match client.status() {
+                    ConnectionStatus::Disconnected(r) => Some(r.to_string()),
+                    _ => None,
+                };
+                return SessionEnd::Disconnected(reason);
             }
             Some(command) = cmd_rx.recv() => {
                 // Client-side commands
@@ -261,10 +330,10 @@ async fn execute_with_disconnect_check(
     {
         if is_connection_error(&e) {
             if config.reconnect {
-                return Some(SessionEnd::Disconnected);
+                return Some(SessionEnd::Disconnected(None));
             }
             error!("Connection to FreeSWITCH lost");
-            return Some(SessionEnd::Disconnected);
+            return Some(SessionEnd::Disconnected(None));
         }
         processor
             .handle_error(e)

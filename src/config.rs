@@ -5,6 +5,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// Top-level configuration structure matching the YAML format
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -221,9 +222,13 @@ impl FsCliConfig {
         if let Some(config_dir) = dirs::config_dir() {
             let config_path = config_dir.join("fs_cli.yaml");
             if let Some(parent) = config_path.parent() {
-                std::fs::create_dir_all(parent).ok(); // Ignore errors
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!("Could not create config directory {}: {}", parent.display(), e);
+                }
                 let yaml_content = serde_yaml::to_string(&default_config).unwrap_or_default();
-                std::fs::write(&config_path, yaml_content).ok(); // Ignore errors
+                if let Err(e) = std::fs::write(&config_path, &yaml_content) {
+                    warn!("Could not write default config to {}: {}", config_path.display(), e);
+                }
             }
         }
 
@@ -322,18 +327,18 @@ fs_cli:
         let true_app_config = true_profile
             .to_app_config()
             .unwrap();
-        assert_eq!(true_app_config.retry, true);
-        assert_eq!(true_app_config.reconnect, true);
-        assert_eq!(true_app_config.events, true);
-        assert_eq!(true_app_config.quiet, true);
+        assert!(true_app_config.retry);
+        assert!(true_app_config.reconnect);
+        assert!(true_app_config.events);
+        assert!(true_app_config.quiet);
 
         let false_app_config = false_profile
             .to_app_config()
             .unwrap();
-        assert_eq!(false_app_config.retry, false);
-        assert_eq!(false_app_config.reconnect, false);
-        assert_eq!(false_app_config.events, false);
-        assert_eq!(false_app_config.quiet, false);
+        assert!(!false_app_config.retry);
+        assert!(!false_app_config.reconnect);
+        assert!(!false_app_config.events);
+        assert!(!false_app_config.quiet);
     }
 
     #[test]
@@ -388,10 +393,10 @@ fs_cli:
         }
 
         // Config values should remain unchanged
-        assert_eq!(config.retry, true);
-        assert_eq!(config.reconnect, true);
-        assert_eq!(config.events, true);
-        assert_eq!(config.quiet, true);
+        assert!(config.retry);
+        assert!(config.reconnect);
+        assert!(config.events);
+        assert!(config.quiet);
 
         // Test 2: Config has false values, CLI overrides to true
         config.retry = false;
@@ -420,9 +425,9 @@ fs_cli:
         }
 
         // CLI should override config
-        assert_eq!(config.retry, true);
-        assert_eq!(config.reconnect, true);
-        assert_eq!(config.events, true);
-        assert_eq!(config.quiet, true);
+        assert!(config.retry);
+        assert!(config.reconnect);
+        assert!(config.events);
+        assert!(config.quiet);
     }
 }

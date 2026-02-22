@@ -9,7 +9,7 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Context, Helper};
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 /// Standard UUID length in characters (8-4-4-4-12 format)
 const UUID_LEN: usize = 36;
@@ -236,8 +236,7 @@ impl FsCliCompleter {
             self.debug_level
                 .debug_print(EslDebugLevel::Debug6, "Have completion channel");
 
-            // Create a channel to receive the response
-            let (response_tx, response_rx) = oneshot::channel::<Vec<String>>();
+            let (response_tx, response_rx) = std::sync::mpsc::sync_channel::<Vec<String>>(1);
 
             // Send completion request to main thread
             let request = CompletionRequest {
@@ -261,21 +260,8 @@ impl FsCliCompleter {
                     "Sent completion request, waiting for response...",
                 );
 
-            // Wait for response with timeout (blocking call from sync context)
-            // We use a thread spawn to handle async within sync context
-            match std::thread::spawn(move || {
-                // Create a new runtime for this thread
-                let rt = tokio::runtime::Runtime::new().ok()?;
-                rt.block_on(async {
-                    tokio::time::timeout(Duration::from_millis(500), response_rx)
-                        .await
-                        .ok()?
-                        .ok()
-                })
-            })
-            .join()
-            {
-                Ok(Some(completions)) => {
+            match response_rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(completions) => {
                     self.debug_level
                         .debug_print(
                             EslDebugLevel::Debug6,
@@ -283,16 +269,11 @@ impl FsCliCompleter {
                         );
                     completions
                 }
-                Ok(None) => {
-                    self.debug_level
-                        .debug_print(EslDebugLevel::Debug6, "Received None from response");
-                    Vec::new()
-                }
                 Err(e) => {
                     self.debug_level
                         .debug_print(
                             EslDebugLevel::Debug6,
-                            &format!("Thread join error: {:?}", e),
+                            &format!("Completion response error: {}", e),
                         );
                     Vec::new()
                 }

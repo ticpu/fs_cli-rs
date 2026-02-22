@@ -153,21 +153,9 @@ async fn connect_to_freeswitch_with_retry(
 
 /// Check if error indicates connection loss
 pub fn is_connection_error(error: &anyhow::Error) -> bool {
-    if let Some(esl_err) = error.downcast_ref::<EslError>() {
-        return esl_err.is_connection_error();
-    }
-    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
-        return matches!(
-            io_err.kind(),
-            std::io::ErrorKind::ConnectionRefused
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::BrokenPipe
-                | std::io::ErrorKind::TimedOut
-                | std::io::ErrorKind::UnexpectedEof
-        );
-    }
-    false
+    error
+        .downcast_ref::<EslError>()
+        .is_some_and(|e| e.is_connection_error())
 }
 
 /// Subscribe to events for monitoring
@@ -311,24 +299,13 @@ mod tests {
 
     #[test]
     fn test_is_connection_error_with_io_errors() {
-        for error_kind in [
-            std::io::ErrorKind::ConnectionRefused,
-            std::io::ErrorKind::ConnectionReset,
-            std::io::ErrorKind::ConnectionAborted,
-            std::io::ErrorKind::BrokenPipe,
-            std::io::ErrorKind::TimedOut,
-            std::io::ErrorKind::UnexpectedEof,
-        ] {
-            let io_err = std::io::Error::new(error_kind, "test");
-            let err: anyhow::Error = io_err.into();
-            assert!(
-                is_connection_error(&err),
-                "{:?} should be a connection error",
-                error_kind
-            );
-        }
+        // IO errors wrapped in EslError are connection errors
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
+        let err: anyhow::Error = EslError::from(io_err).into();
+        assert!(is_connection_error(&err));
 
-        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test");
+        // Bare io::Error not wrapped in EslError is not recognized
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
         let err: anyhow::Error = io_err.into();
         assert!(!is_connection_error(&err));
     }
