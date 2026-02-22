@@ -3,7 +3,7 @@
 use crate::esl_debug::EslDebugLevel;
 use anyhow::{Error, Result};
 use colored::*;
-use freeswitch_esl_tokio::{command::EslCommand, EslClient};
+use freeswitch_esl_tokio::EslClient;
 use rustyline::ExternalPrinter;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -412,21 +412,13 @@ impl CommandProcessor {
             Err(err) => return Ok(Some(err)),
         };
 
-        // Send the log command directly to FreeSWITCH (not as API)
-        let cmd = if log_level == LogLevel::NoLog {
-            EslCommand::Api {
-                command: "nolog".to_string(),
-            }
+        let response = if log_level == LogLevel::NoLog {
+            client.nolog().await?
         } else {
-            EslCommand::Log {
-                level: log_level
-                    .as_str()
-                    .to_string(),
-            }
+            client
+                .log(log_level.as_str())
+                .await?
         };
-        let response = client
-            .send_command(cmd)
-            .await?;
 
         if response.is_success() {
             Ok(Some(format!(
@@ -439,7 +431,6 @@ impl CommandProcessor {
                 "Failed to set log level: {}",
                 response
                     .reply_text()
-                    .map(|s| s.as_str())
                     .unwrap_or("Unknown error")
             )))
         }

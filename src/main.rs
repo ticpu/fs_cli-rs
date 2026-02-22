@@ -195,23 +195,13 @@ pub async fn enable_logging(
 ) -> Result<()> {
     info!("Enabling logging at level: {}", log_level.as_str());
 
-    use freeswitch_esl_tokio::command::EslCommand;
-
-    let cmd = if log_level == crate::commands::LogLevel::NoLog {
-        EslCommand::Api {
-            command: "nolog".to_string(),
-        }
+    let response = if log_level == crate::commands::LogLevel::NoLog {
+        client.nolog().await?
     } else {
-        EslCommand::Log {
-            level: log_level
-                .as_str()
-                .to_string(),
-        }
+        client
+            .log(log_level.as_str())
+            .await?
     };
-
-    let response = client
-        .send_command(cmd)
-        .await?;
     if !response.is_success() {
         if let Some(reply) = response.reply_text() {
             warn!("Failed to set log level: {}", reply);

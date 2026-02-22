@@ -13,10 +13,7 @@ pub struct LogDisplay;
 impl LogDisplay {
     /// Check if an event is a log event based on Content-Type header
     pub fn is_log_event(event: &EslEvent) -> bool {
-        if let Some(content_type) = event
-            .headers
-            .get("Content-Type")
-        {
+        if let Some(content_type) = event.header("Content-Type") {
             content_type.eq_ignore_ascii_case("log/data")
         } else {
             false
@@ -31,19 +28,13 @@ impl LogDisplay {
     ) {
         // Extract log level
         let log_level = event
-            .headers
-            .get("Log-Level")
-            .and_then(|level| {
-                level
-                    .parse::<u32>()
-                    .ok()
-            })
+            .header("Log-Level")
+            .and_then(|level| level.parse::<u32>().ok())
             .unwrap_or(7);
 
         // Get log message body
         let message = event
-            .body
-            .as_deref()
+            .body()
             .unwrap_or("");
         if message
             .trim()
