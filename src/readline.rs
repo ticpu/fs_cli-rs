@@ -5,7 +5,7 @@ use crate::config::AppConfig;
 use anyhow::Result;
 use gethostname::gethostname;
 use rustyline::history::FileHistory;
-use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
+use rustyline::{Cmd, Editor, EventHandler, ExternalPrinter, KeyCode, KeyEvent, Modifiers, Movement};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,7 +66,14 @@ fn setup_function_key_bindings(
         let key = format!("f{}", i);
         if let Some(command) = macros.get(&key) {
             let f_key = KeyEvent(KeyCode::F(i as u8), Modifiers::NONE);
-            rl.bind_sequence(f_key, Cmd::MacroClearLine(format!("{}\n", command)));
+            rl.bind_sequence(
+                f_key,
+                EventHandler::Macro(vec![
+                    Cmd::Kill(Movement::WholeLine),
+                    Cmd::Insert(1, command.clone()),
+                    Cmd::AcceptLine,
+                ]),
+            );
         }
     }
     Ok(())
@@ -123,11 +130,7 @@ pub fn run_readline_loop(
         };
         let prompt = format!("freeswitch@{}> ", prompt_host);
 
-        let result = if let Some(restore_content) = rl.take_pending_restore() {
-            rl.readline_with_initial(&prompt, (&restore_content, ""))
-        } else {
-            rl.readline(&prompt)
-        };
+        let result = rl.readline(&prompt);
 
         match result {
             Ok(line) => {
