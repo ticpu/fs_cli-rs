@@ -69,6 +69,7 @@ fn setup_function_key_bindings(
             rl.bind_sequence(
                 f_key,
                 EventHandler::Macro(vec![
+                    Cmd::Stash,
                     Cmd::Kill(Movement::WholeLine),
                     Cmd::Insert(1, command.clone()),
                     Cmd::AcceptLine,
@@ -130,7 +131,11 @@ pub fn run_readline_loop(
         };
         let prompt = format!("freeswitch@{}> ", prompt_host);
 
-        let result = rl.readline(&prompt);
+        let result = if let Some(stashed) = rl.take_stashed_line() {
+            rl.readline_with_initial(&prompt, (&stashed, ""))
+        } else {
+            rl.readline(&prompt)
+        };
 
         match result {
             Ok(line) => {
