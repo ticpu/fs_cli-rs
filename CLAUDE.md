@@ -13,11 +13,16 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 - `cargo clippy --fix --allow-dirty --message-format=short` - Linting
 - `cargo test --message-format=short` - Tests
 
+## Git Conventions
+- Conventional commits: `feat:`, `fix:`, `build:`, `release:`, etc.
+- Version bumps: `release: version X.Y.Z`
+
 ## Release Process
 1. Bump version in `Cargo.toml`
-2. Commit and push to master 
-3. `git tag -as vX.X.X -m "Release vX.X.X"`
-4. GitHub Actions creates release automatically
+2. Commit as `release: version X.Y.Z` and push to master
+3. Verify CI is green before tagging
+4. `git tag -as vX.X.X -m "Release vX.X.X"`
+5. GitHub Actions creates release automatically
 - CI validates binaries with `--version` and `--help` output checks
 - Test ARM64 with: `QEMU_LD_PREFIX=/path/to/aarch64/root qemu-aarch64-static binary`
 
