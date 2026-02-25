@@ -15,7 +15,7 @@ use crossterm::{
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use freeswitch_esl_tokio::{ConnectionStatus, EslClient, EslEventStream, EslEventType};
+use freeswitch_esl_tokio::{ConnectionStatus, EslClient, EslEventStream, EslEventType, HeaderLookup};
 use rustyline::ExternalPrinter;
 use std::io::{self, Write};
 use std::sync::Arc;

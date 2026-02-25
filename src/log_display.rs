@@ -2,7 +2,7 @@
 
 use crate::commands::ColorMode;
 use colored::*;
-use freeswitch_esl_tokio::{EslEvent, EslEventType, EventHeader};
+use freeswitch_esl_tokio::{EslEvent, EventHeader};
 use rustyline::ExternalPrinter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -12,7 +12,9 @@ pub struct LogDisplay;
 
 impl LogDisplay {
     pub fn is_log_event(event: &EslEvent) -> bool {
-        event.is_event_type(EslEventType::Log)
+        event
+            .header_str("Content-Type")
+            .is_some_and(|ct| ct.eq_ignore_ascii_case("log/data"))
     }
 
     /// Display a log event with appropriate formatting and colors using ExternalPrinter
@@ -106,5 +108,32 @@ impl LogDisplay {
     fn format_colored_log_full_line(message: &str, log_level: u32) -> String {
         let colored_message = Self::colorize_by_level(message, log_level);
         format!("{}", colored_message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freeswitch_esl_tokio::EslEvent;
+
+    #[test]
+    fn is_log_event_with_log_data_content_type() {
+        let mut event = EslEvent::new();
+        event.set_header("Content-Type", "log/data");
+        event.set_header("Log-Level", "6");
+        assert!(LogDisplay::is_log_event(&event));
+    }
+
+    #[test]
+    fn is_log_event_rejects_normal_event() {
+        let mut event = EslEvent::new();
+        event.set_header("Event-Name", "CHANNEL_CREATE");
+        assert!(!LogDisplay::is_log_event(&event));
+    }
+
+    #[test]
+    fn is_log_event_rejects_empty_event() {
+        let event = EslEvent::new();
+        assert!(!LogDisplay::is_log_event(&event));
     }
 }

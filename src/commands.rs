@@ -333,6 +333,10 @@ impl CommandProcessor {
                 .to_lowercase()
                 .as_str()
             {
+                "log" => {
+                    self.handle_log_command(client, &parts[1..])
+                        .await
+                }
                 "show" if parts.len() > 1 => {
                     self.handle_show_command(client, &parts[1..])
                         .await
@@ -523,5 +527,31 @@ Use Tab for command completion and Up/Down arrows for history.
         };
         self.print_message(&formatted_help)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_level_parse_all_valid() {
+        for level in LogLevel::all_variants() {
+            let parsed: Result<LogLevel, _> = level.as_str().parse();
+            assert!(parsed.is_ok(), "failed to parse '{}'", level.as_str());
+            assert_eq!(parsed.unwrap(), *level);
+        }
+    }
+
+    #[test]
+    fn log_level_parse_invalid_returns_error() {
+        let result: Result<LogLevel, _> = "hello".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn log_level_parse_case_insensitive() {
+        let result: Result<LogLevel, _> = "DEBUG".parse();
+        assert_eq!(result.unwrap(), LogLevel::Debug);
     }
 }
