@@ -2,7 +2,7 @@
 
 use crate::commands::ColorMode;
 use colored::*;
-use freeswitch_esl_tokio::EslEvent;
+use freeswitch_esl_tokio::{EslEvent, EslEventType, EventHeader};
 use rustyline::ExternalPrinter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -11,13 +11,8 @@ use tokio::sync::Mutex;
 pub struct LogDisplay;
 
 impl LogDisplay {
-    /// Check if an event is a log event based on Content-Type header
     pub fn is_log_event(event: &EslEvent) -> bool {
-        if let Some(content_type) = event.header("Content-Type") {
-            content_type.eq_ignore_ascii_case("log/data")
-        } else {
-            false
-        }
+        event.is_event_type(EslEventType::Log)
     }
 
     /// Display a log event with appropriate formatting and colors using ExternalPrinter
@@ -28,7 +23,7 @@ impl LogDisplay {
     ) {
         // Extract log level
         let log_level = event
-            .header("Log-Level")
+            .header(EventHeader::LogLevel)
             .and_then(|level| level.parse::<u32>().ok())
             .unwrap_or(7);
 
