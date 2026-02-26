@@ -181,8 +181,8 @@ fn format_channel_event(
     let uuid = event.unique_id().unwrap_or("?");
 
     let line = if event_type == EslEventType::ChannelHangup {
-        let cause = event.hangup_cause().unwrap_or("UNKNOWN");
-        format!("[{}] {} {} ({})", label, uuid, channel, cause)
+        let cause = event.hangup_cause();
+        format!("[{}] {} {} ({})", label, uuid, channel, cause.map_or_else(|e| e.to_string(), |h| h.unwrap().to_string()))
     } else {
         let cid_num = event.caller_id_number().unwrap_or("");
         let cid_name = event.caller_id_name().unwrap_or("");
