@@ -8,14 +8,14 @@ use crate::config::AppConfig;
 use crate::console_complete::get_console_complete;
 use crate::log_display::LogDisplay;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
-use crate::{connect_to_freeswitch, enable_logging, is_connection_error, subscribe_to_events};
+use crate::{connect_to_freeswitch, enable_logging, is_connection_error, subscribe_heartbeat, subscribe_to_events};
 use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use freeswitch_esl_tokio::{ConnectionStatus, EslClient, EslEventStream, EslEventType, HeaderLookup};
+use freeswitch_esl_tokio::{ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslEventType, HeaderLookup};
 use rustyline::ExternalPrinter;
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -24,10 +24,36 @@ use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tracing::{error, info, warn};
 
+const LIVENESS_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(unix)]
+fn save_terminal_state() -> Option<libc::termios> {
+    use std::mem::MaybeUninit;
+    unsafe {
+        let mut termios = MaybeUninit::uninit();
+        if libc::tcgetattr(libc::STDIN_FILENO, termios.as_mut_ptr()) == 0 {
+            Some(termios.assume_init())
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(unix)]
+fn restore_terminal_state(termios: &libc::termios) {
+    unsafe {
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, termios);
+    }
+}
+
 /// Why the command loop exited
 enum SessionEnd {
     Quit,
     Disconnected(Option<String>),
+    /// Liveness timeout: no traffic from server. Always fatal — reconnecting
+    /// to a connection that delivered no heartbeats is unlikely to help, and
+    /// it signals a missing heartbeat subscription.
+    HeartbeatTimeout,
 }
 
 /// Run interactive CLI mode with reconnection support
@@ -44,9 +70,12 @@ pub async fn run_interactive_mode(
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
 
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
-    client.set_liveness_timeout(Duration::from_secs(30));
+    client.set_liveness_timeout(LIVENESS_TIMEOUT);
 
     let macros = build_macros(config);
+
+    #[cfg(unix)]
+    let original_termios = save_terminal_state();
 
     let config_clone = config.clone();
     let readline_handle = tokio::task::spawn_blocking(move || {
@@ -96,6 +125,10 @@ pub async fn run_interactive_mode(
                     .ok();
                 break Ok(());
             }
+            SessionEnd::HeartbeatTimeout => {
+                error!("Liveness timeout: no traffic received from server");
+                break Err(anyhow::anyhow!("Liveness timeout: connection lost"));
+            }
             SessionEnd::Disconnected(reason) => {
                 if !config.reconnect {
                     let msg = match &reason {
@@ -113,7 +146,7 @@ pub async fn run_interactive_mode(
                         client = new_client;
                         events = new_events;
                         setup_subscriptions(&client, config).await;
-                        client.set_liveness_timeout(Duration::from_secs(30));
+                        client.set_liveness_timeout(LIVENESS_TIMEOUT);
                         continue;
                     }
                     Err(e) => break Err(e),
@@ -123,6 +156,21 @@ pub async fn run_interactive_mode(
     };
 
     readline_handle.abort();
+
+    if session_result.is_err() {
+        // The readline thread is blocked inside rl.readline() and cannot be
+        // interrupted. Restore the terminal ourselves (rustyline won't get the
+        // chance) and return immediately; main.rs will call process::exit which
+        // kills the detached blocking thread.
+        #[cfg(unix)]
+        if let Some(ref termios) = original_termios {
+            restore_terminal_state(termios);
+        }
+        return session_result;
+    }
+
+    // Clean exit: readline already broke its loop (user typed /quit or EOF),
+    // so the handle resolves quickly.
     if let Err(e) = readline_handle.await {
         if !e.is_cancelled() {
             warn!("Error waiting for readline thread: {}", e);
@@ -138,6 +186,8 @@ async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
         if let Err(e) = subscribe_to_events(client).await {
             warn!("Failed to re-subscribe to events: {}", e);
         }
+    } else if let Err(e) = subscribe_heartbeat(client).await {
+        warn!("Failed to re-subscribe to heartbeat: {}", e);
     }
     if !config.quiet {
         if let Err(e) = enable_logging(client, config.log_level).await {
@@ -255,11 +305,15 @@ async fn run_command_loop(
     loop {
         tokio::select! {
             _ = &mut *event_task => {
-                let reason = match client.status() {
-                    ConnectionStatus::Disconnected(r) => Some(r.to_string()),
-                    _ => None,
+                return match client.status() {
+                    ConnectionStatus::Disconnected(DisconnectReason::HeartbeatExpired) => {
+                        SessionEnd::HeartbeatTimeout
+                    }
+                    ConnectionStatus::Disconnected(r) => {
+                        SessionEnd::Disconnected(Some(r.to_string()))
+                    }
+                    _ => SessionEnd::Disconnected(None),
                 };
-                return SessionEnd::Disconnected(reason);
             }
             Some(command) = cmd_rx.recv() => {
                 // Client-side commands

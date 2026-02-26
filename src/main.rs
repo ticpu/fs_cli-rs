@@ -59,6 +59,11 @@ async fn main() -> Result<()> {
                 .debug
                 .debug_print(EslDebugLevel::Debug, "Subscribing to events");
             subscribe_to_events(&client).await?;
+        } else {
+            // Heartbeat subscription keeps the liveness timer from firing during idle periods
+            if let Err(e) = subscribe_heartbeat(&client).await {
+                warn!("Failed to subscribe to heartbeat: {}", e);
+            }
         }
 
         if !config.quiet {
@@ -173,6 +178,14 @@ pub async fn subscribe_to_events(client: &EslClient) -> Result<()> {
         )
         .await?;
     println!("Event monitoring enabled");
+    Ok(())
+}
+
+/// Subscribe to heartbeat events only, to keep the liveness timer alive
+pub async fn subscribe_heartbeat(client: &EslClient) -> Result<()> {
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::Heartbeat])
+        .await?;
     Ok(())
 }
 
