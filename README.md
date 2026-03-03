@@ -14,12 +14,14 @@ Interactive FreeSWITCH CLI client written in Rust using
 
 ## Installation
 
+Pre-built binaries for Linux AMD64/ARM64 and Windows are available on the
+[releases page](https://github.com/ticpu/fs_cli-rs/releases).
+
+To build from source:
+
 ```sh
 cargo build --release
 ```
-
-Pre-built binaries for Linux AMD64/ARM64 and Windows are available on the
-[releases page](https://github.com/ticpu/fs_cli-rs/releases).
 
 ## Usage
 
