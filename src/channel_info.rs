@@ -86,8 +86,10 @@ impl ChannelProvider {
             return Ok(0);
         }
 
-        let body = response.body_string();
-        match serde_json::from_str::<ChannelsResponse>(&body) {
+        let body = response
+            .body()
+            .unwrap_or_default();
+        match serde_json::from_str::<ChannelsResponse>(body) {
             Ok(channels_response) => Ok(channels_response.row_count),
             Err(_) => Ok(0), // Parse error, assume no channels
         }
@@ -103,8 +105,10 @@ impl ChannelProvider {
             return Ok(Vec::new());
         }
 
-        let body = response.body_string();
-        match serde_json::from_str::<ChannelsResponse>(&body) {
+        let body = response
+            .body()
+            .unwrap_or_default();
+        match serde_json::from_str::<ChannelsResponse>(body) {
             Ok(channels_response) => {
                 let mut channels = channels_response.rows;
                 // Sort by created_epoch (newest first)

@@ -26,7 +26,11 @@ impl LogDisplay {
         // Extract log level
         let log_level = event
             .header(EventHeader::LogLevel)
-            .and_then(|level| level.parse::<u32>().ok())
+            .and_then(|level| {
+                level
+                    .parse::<u32>()
+                    .ok()
+            })
             .unwrap_or(7);
 
         // Get log message body

@@ -5,7 +5,9 @@ use crate::config::AppConfig;
 use anyhow::Result;
 use gethostname::gethostname;
 use rustyline::history::FileHistory;
-use rustyline::{Cmd, Editor, EventHandler, ExternalPrinter, KeyCode, KeyEvent, Modifiers, Movement};
+use rustyline::{
+    Cmd, Editor, EventHandler, ExternalPrinter, KeyCode, KeyEvent, Modifiers, Movement,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

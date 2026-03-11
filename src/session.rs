@@ -8,14 +8,19 @@ use crate::config::AppConfig;
 use crate::console_complete::get_console_complete;
 use crate::log_display::LogDisplay;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
-use crate::{connect_to_freeswitch, enable_logging, is_connection_error, subscribe_heartbeat, subscribe_to_events};
+use crate::{
+    connect_to_freeswitch, enable_logging, is_connection_error, subscribe_heartbeat,
+    subscribe_to_events,
+};
 use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use freeswitch_esl_tokio::{ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslEventType, HeaderLookup};
+use freeswitch_esl_tokio::{
+    ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslEventType, HeaderLookup,
+};
 use rustyline::ExternalPrinter;
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -227,17 +232,39 @@ fn format_channel_event(
         _ => return None,
     };
 
-    let channel = event.channel_name().unwrap_or("unknown");
-    let uuid = event.unique_id().unwrap_or("?");
+    let channel = event
+        .channel_name()
+        .unwrap_or("unknown");
+    let uuid = event
+        .unique_id()
+        .unwrap_or("?");
 
     let line = if event_type == EslEventType::ChannelHangup {
         let cause = event.hangup_cause();
-        format!("[{}] {} {} ({})", label, uuid, channel, cause.map_or_else(|e| e.to_string(), |h| h.unwrap().to_string()))
+        format!(
+            "[{}] {} {} ({})",
+            label,
+            uuid,
+            channel,
+            cause.map_or_else(
+                |e| e.to_string(),
+                |h| h
+                    .unwrap()
+                    .to_string()
+            )
+        )
     } else {
-        let cid_num = event.caller_id_number().unwrap_or("");
-        let cid_name = event.caller_id_name().unwrap_or("");
+        let cid_num = event
+            .caller_id_number()
+            .unwrap_or("");
+        let cid_name = event
+            .caller_id_name()
+            .unwrap_or("");
         if !cid_num.is_empty() || !cid_name.is_empty() {
-            format!("[{}] {} {} <{}> {}", label, uuid, channel, cid_num, cid_name)
+            format!(
+                "[{}] {} {} <{}> {}",
+                label, uuid, channel, cid_num, cid_name
+            )
         } else {
             format!("[{}] {} {}", label, uuid, channel)
         }
@@ -249,10 +276,7 @@ fn format_channel_event(
     })
 }
 
-fn print_to_printer(
-    printer: &Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
-    message: String,
-) {
+fn print_to_printer(printer: &Option<Arc<Mutex<dyn ExternalPrinter + Send>>>, message: String) {
     if let Some(printer_arc) = printer {
         if let Ok(mut p) = printer_arc.try_lock() {
             let _ = p.print(message);

@@ -223,11 +223,19 @@ impl FsCliConfig {
             let config_path = config_dir.join("fs_cli.yaml");
             if let Some(parent) = config_path.parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
-                    warn!("Could not create config directory {}: {}", parent.display(), e);
+                    warn!(
+                        "Could not create config directory {}: {}",
+                        parent.display(),
+                        e
+                    );
                 }
                 let yaml_content = serde_yaml::to_string(&default_config).unwrap_or_default();
                 if let Err(e) = std::fs::write(&config_path, &yaml_content) {
-                    warn!("Could not write default config to {}: {}", config_path.display(), e);
+                    warn!(
+                        "Could not write default config to {}: {}",
+                        config_path.display(),
+                        e
+                    );
                 }
             }
         }

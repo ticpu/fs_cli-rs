@@ -197,7 +197,9 @@ pub async fn enable_logging(
     info!("Enabling logging at level: {}", log_level.as_str());
 
     let response = if log_level == crate::commands::LogLevel::NoLog {
-        client.nolog().await?
+        client
+            .nolog()
+            .await?
     } else {
         client
             .log(log_level.as_str())

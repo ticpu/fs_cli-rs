@@ -281,12 +281,14 @@ impl CommandProcessor {
                     }
                 }
 
-                let body = response.body_string();
+                let body = response
+                    .body()
+                    .unwrap_or_default();
                 if !body
                     .trim()
                     .is_empty()
                 {
-                    self.print_message(&body)
+                    self.print_message(body)
                         .await;
                 }
             }
@@ -345,19 +347,35 @@ impl CommandProcessor {
                     let response = client
                         .api("status")
                         .await?;
-                    Ok(Some(response.body_string()))
+                    Ok(Some(
+                        response
+                            .body()
+                            .unwrap_or_default()
+                            .to_string(),
+                    ))
                 }
                 "version" => {
                     let response = client
                         .api("version")
                         .await?;
-                    Ok(Some(response.body_string()))
+                    Ok(Some(
+                        response
+                            .body()
+                            .unwrap_or_default()
+                            .to_string(),
+                    ))
                 }
                 "uptime" => {
                     let response = client
                         .api("status")
                         .await?;
-                    Ok(Some(self.extract_uptime(&response.body_string())))
+                    Ok(Some(
+                        self.extract_uptime(
+                            response
+                                .body()
+                                .unwrap_or_default(),
+                        ),
+                    ))
                 }
                 "reload" => {
                     if parts.len() > 1 {
@@ -368,7 +386,9 @@ impl CommandProcessor {
                         Ok(Some(format!(
                             "Reloaded module: {}\n{}",
                             module,
-                            response.body_string()
+                            response
+                                .body()
+                                .unwrap_or_default()
                         )))
                     } else {
                         let response = client
@@ -376,7 +396,9 @@ impl CommandProcessor {
                             .await?;
                         Ok(Some(format!(
                             "Reloaded XML configuration\n{}",
-                            response.body_string()
+                            response
+                                .body()
+                                .unwrap_or_default()
                         )))
                     }
                 }
@@ -388,7 +410,9 @@ impl CommandProcessor {
                             .await?;
                         Ok(Some(format!(
                             "Originate command executed\n{}",
-                            response.body_string()
+                            response
+                                .body()
+                                .unwrap_or_default()
                         )))
                     } else {
                         Ok(Some(
@@ -417,7 +441,9 @@ impl CommandProcessor {
         };
 
         let response = if log_level == LogLevel::NoLog {
-            client.nolog().await?
+            client
+                .nolog()
+                .await?
         } else {
             client
                 .log(log_level.as_str())
@@ -457,7 +483,12 @@ impl CommandProcessor {
         let response = client
             .api(&command)
             .await?;
-        Ok(Some(response.body_string()))
+        Ok(Some(
+            response
+                .body()
+                .unwrap_or_default()
+                .to_string(),
+        ))
     }
 
     /// Extract uptime information from status output
@@ -537,7 +568,9 @@ mod tests {
     #[test]
     fn log_level_parse_all_valid() {
         for level in LogLevel::all_variants() {
-            let parsed: Result<LogLevel, _> = level.as_str().parse();
+            let parsed: Result<LogLevel, _> = level
+                .as_str()
+                .parse();
             assert!(parsed.is_ok(), "failed to parse '{}'", level.as_str());
             assert_eq!(parsed.unwrap(), *level);
         }
