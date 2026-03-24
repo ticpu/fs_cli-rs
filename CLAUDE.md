@@ -48,5 +48,5 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 - Locations: `~/.config/fs_cli.yaml`, `~/.fs_cli.yaml`, `/etc/freeswitch/fs_cli.yaml`
 
 ## Dependencies
-- `freeswitch-esl-rs`, `rustyline` (git deps)
+- `freeswitch-esl-tokio`, `rustyline` (git deps)
 - `tokio`, `serde_yaml`, `crossterm`
