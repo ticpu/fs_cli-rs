@@ -19,10 +19,11 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 
 ## Release Process
 1. Bump version in `Cargo.toml`
-2. Commit as `release: version X.Y.Z` and push to master
-3. Verify CI is green before tagging
-4. `git tag -as vX.X.X -m "Release vX.X.X"`
-5. GitHub Actions creates release automatically
+2. Verify Windows cross-compile: `cargo build --release --target x86_64-pc-windows-gnu`
+3. Commit as `release: version X.Y.Z` and push to master
+4. Verify CI is green before tagging
+5. `git tag -as vX.X.X -m "Release vX.X.X\n\n- brief changelog"`
+6. GitHub Actions creates release automatically
 - CI validates binaries with `--version` and `--help` output checks
 - Test ARM64 with: `QEMU_LD_PREFIX=/path/to/aarch64/root qemu-aarch64-static binary`
 
