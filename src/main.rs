@@ -53,38 +53,11 @@ async fn main() -> Result<()> {
         client
             .disconnect()
             .await?;
-    } else {
-        if config.events {
-            config
-                .debug
-                .debug_print(EslDebugLevel::Debug, "Subscribing to events");
-            subscribe_to_events(&client).await?;
-        } else {
-            // Heartbeat subscription keeps the liveness timer from firing during idle periods
-            if let Err(e) = subscribe_heartbeat(&client).await {
-                warn!("Failed to subscribe to heartbeat: {}", e);
-            }
-        }
-
-        if !config.quiet {
-            config
-                .debug
-                .debug_print(
-                    EslDebugLevel::Debug,
-                    &format!(
-                        "Enabling logging at level: {}",
-                        config
-                            .log_level
-                            .as_str()
-                    ),
-                );
-            enable_logging(&client, config.log_level).await?;
-        }
-
-        if let Err(e) = session::run_interactive_mode(client, events, &config).await {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
+    } else if let Err(e) = session::run_interactive_mode(client, events, &config).await {
+        // Event subscriptions, idle-liveness gating, and logging are set up
+        // per-connection inside run_interactive_mode (initial and reconnect).
+        eprintln!("{}", e);
+        std::process::exit(1);
     }
 
     Ok(())
@@ -161,6 +134,15 @@ pub fn is_connection_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<EslError>()
         .is_some_and(|e| e.is_connection_error())
+}
+
+/// Check if error is an ESL permission denial (e.g. an event the user is not
+/// allowed to subscribe to). Used to gate the idle-liveness timer: a restricted
+/// user who can't subscribe to HEARTBEAT has no idle traffic source.
+pub fn is_permission_denied(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<EslError>()
+        .is_some_and(|e| e.is_permission_denied())
 }
 
 /// Subscribe to events for monitoring

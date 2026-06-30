@@ -9,8 +9,8 @@ use crate::console_complete::get_console_complete;
 use crate::log_display::LogDisplay;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
 use crate::{
-    connect_to_freeswitch, enable_logging, is_connection_error, subscribe_heartbeat,
-    subscribe_to_events,
+    connect_to_freeswitch, enable_logging, is_connection_error, is_permission_denied,
+    subscribe_heartbeat, subscribe_to_events,
 };
 use anyhow::Result;
 use crossterm::{
@@ -19,7 +19,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use freeswitch_esl_tokio::{
-    ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslEventType, HeaderLookup,
+    ConnectionStatus, EslClient, EslEventStream, EslEventType, HeaderLookup,
 };
 use rustyline::ExternalPrinter;
 use std::io::{self, Write};
@@ -54,11 +54,12 @@ fn restore_terminal_state(termios: &libc::termios) {
 /// Why the command loop exited
 enum SessionEnd {
     Quit,
+    /// Connection lost. A liveness timeout (heartbeats stopped on a connection
+    /// that had them) arrives here too, via `DisconnectReason::HeartbeatExpired`
+    /// stringified into the reason — treated like any disconnect, so it honors
+    /// `--reconnect`. Liveness is only ever enabled when a HEARTBEAT
+    /// subscription succeeded, so a timeout means a genuinely stalled socket.
     Disconnected(Option<String>),
-    /// Liveness timeout: no traffic from server. Always fatal — reconnecting
-    /// to a connection that delivered no heartbeats is unlikely to help, and
-    /// it signals a missing heartbeat subscription.
-    HeartbeatTimeout,
 }
 
 /// Run interactive CLI mode with reconnection support
@@ -74,8 +75,8 @@ pub async fn run_interactive_mode(
     let (printer_tx, printer_rx) = oneshot::channel::<Arc<Mutex<dyn ExternalPrinter + Send>>>();
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
 
+    setup_subscriptions(&client, config).await;
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
-    client.set_liveness_timeout(LIVENESS_TIMEOUT);
 
     let macros = build_macros(config);
 
@@ -130,10 +131,6 @@ pub async fn run_interactive_mode(
                     .ok();
                 break Ok(());
             }
-            SessionEnd::HeartbeatTimeout => {
-                error!("Liveness timeout: no traffic received from server");
-                break Err(anyhow::anyhow!("Liveness timeout: connection lost"));
-            }
             SessionEnd::Disconnected(reason) => {
                 if !config.reconnect {
                     let msg = match &reason {
@@ -151,7 +148,6 @@ pub async fn run_interactive_mode(
                         client = new_client;
                         events = new_events;
                         setup_subscriptions(&client, config).await;
-                        client.set_liveness_timeout(LIVENESS_TIMEOUT);
                         continue;
                     }
                     Err(e) => break Err(e),
@@ -185,18 +181,31 @@ pub async fn run_interactive_mode(
     session_result
 }
 
-/// Re-subscribe to events and re-enable logging after reconnection
+/// Subscribe to the events this session needs and enable the idle-liveness
+/// timer only when a HEARTBEAT subscription is permitted. A permission-
+/// restricted user (`esl-allowed-events` without HEARTBEAT) gets
+/// `-ERR permission denied`: warn and run without idle-liveness so the timer
+/// can't trip on a healthy idle socket. Runs for the initial connection and
+/// every reconnect.
 async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
-    if config.events {
-        if let Err(e) = subscribe_to_events(client).await {
-            warn!("Failed to re-subscribe to events: {}", e);
+    let subscription = if config.events {
+        subscribe_to_events(client).await
+    } else {
+        subscribe_heartbeat(client).await
+    };
+    match subscription {
+        Ok(()) => client.set_liveness_timeout(LIVENESS_TIMEOUT),
+        Err(e) if is_permission_denied(&e) => {
+            warn!(
+                "event subscription denied ({}); idle-liveness disabled for this user",
+                e
+            );
         }
-    } else if let Err(e) = subscribe_heartbeat(client).await {
-        warn!("Failed to re-subscribe to heartbeat: {}", e);
+        Err(e) => warn!("Failed to subscribe to events: {}", e),
     }
     if !config.quiet {
         if let Err(e) = enable_logging(client, config.log_level).await {
-            warn!("Failed to re-enable logging: {}", e);
+            warn!("Failed to enable logging: {}", e);
         }
     }
 }
@@ -330,9 +339,6 @@ async fn run_command_loop(
         tokio::select! {
             _ = &mut *event_task => {
                 return match client.status() {
-                    ConnectionStatus::Disconnected(DisconnectReason::HeartbeatExpired) => {
-                        SessionEnd::HeartbeatTimeout
-                    }
                     ConnectionStatus::Disconnected(r) => {
                         SessionEnd::Disconnected(Some(r.to_string()))
                     }

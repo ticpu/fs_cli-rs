@@ -15,7 +15,8 @@ name = "fs_cli"
 path = "src/main.rs"
 
 [dependencies]
-freeswitch-esl-tokio = "2"
+freeswitch-esl-tokio = "2.2"
+freeswitch-types = "1.2"
 tokio = { version = "1.0", features = ["full"] }
 clap = { version = "4.0", features = ["derive"] }
 rustyline = { git = "https://github.com/ticpu/rustyline.git", branch = "eventhandler-macro" }
