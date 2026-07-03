@@ -5,6 +5,7 @@ use crate::printer::Printer;
 use anyhow::{anyhow, Error, Result};
 use colored::*;
 use freeswitch_esl_tokio::{EslClient, EslError};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -42,6 +43,20 @@ impl std::fmt::Display for ColorMode {
             ColorMode::Tag => write!(f, "tag"),
             ColorMode::Line => write!(f, "line"),
         }
+    }
+}
+
+impl Serialize for ColorMode {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ColorMode {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        String::deserialize(d)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -98,6 +113,20 @@ impl LogLevel {
             "Usage: /log <level>\nAvailable levels: {}",
             levels.join(", ")
         )
+    }
+}
+
+impl Serialize for LogLevel {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LogLevel {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        String::deserialize(d)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 

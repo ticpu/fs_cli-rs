@@ -3,6 +3,7 @@
 //! Implements debug levels similar to the original fs_cli -d option (0-7)
 //! for controlling ESL protocol message logging on the client side.
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
@@ -91,5 +92,18 @@ impl EslDebugLevel {
 impl fmt::Display for EslDebugLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+impl Serialize for EslDebugLevel {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> Deserialize<'de> for EslDebugLevel {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = u8::deserialize(d)?;
+        Self::from_u8(v).map_err(serde::de::Error::custom)
     }
 }

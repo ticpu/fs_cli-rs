@@ -1,6 +1,7 @@
 //! Configuration management for fs_cli-rs
 
 use crate::commands::{ColorMode, LogLevel};
+use crate::esl_debug::EslDebugLevel;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,13 +30,13 @@ pub struct ProfileConfig {
     pub user: Option<String>,
 
     /// ESL debug level (0-7, higher = more verbose)
-    pub debug: Option<u8>,
+    pub debug: Option<EslDebugLevel>,
 
     /// Color mode for output
-    pub color: Option<String>,
+    pub color: Option<ColorMode>,
 
     /// History file path
-    pub history_file: Option<String>,
+    pub history_file: Option<PathBuf>,
 
     /// Connection timeout in milliseconds
     pub timeout: Option<u64>,
@@ -50,7 +51,7 @@ pub struct ProfileConfig {
     pub events: Option<bool>,
 
     /// Log level for FreeSWITCH logs
-    pub log_level: Option<String>,
+    pub log_level: Option<LogLevel>,
 
     /// Disable automatic log subscription on startup
     pub quiet: Option<bool>,
@@ -69,14 +70,14 @@ impl Default for ProfileConfig {
             port: Some(8021),
             password: Some("ClueCon".to_string()),
             user: None,
-            debug: Some(0),
-            color: Some("line".to_string()),
+            debug: Some(EslDebugLevel::None),
+            color: Some(ColorMode::Line),
             history_file: None,
             timeout: Some(2000),
             retry: Some(false),
             reconnect: Some(false),
             events: Some(false),
-            log_level: Some("debug".to_string()),
+            log_level: Some(LogLevel::Debug),
             quiet: Some(false),
             macros: Some(Self::default_macros()),
             max_auto_complete_uuid: Some(32),
@@ -111,21 +112,15 @@ impl ProfileConfig {
             user: self
                 .user
                 .clone(),
-            debug: crate::esl_debug::EslDebugLevel::from_u8(
-                self.debug
-                    .unwrap_or(0),
-            )?,
+            debug: self
+                .debug
+                .unwrap_or_default(),
             color: self
                 .color
-                .as_deref()
-                .unwrap_or("line")
-                .parse::<ColorMode>()
-                .map_err(anyhow::Error::msg)
-                .context("profile.color field")?,
+                .unwrap_or(ColorMode::Line),
             history_file: self
                 .history_file
-                .as_ref()
-                .map(PathBuf::from),
+                .clone(),
             timeout: self
                 .timeout
                 .unwrap_or(2000),
@@ -140,11 +135,7 @@ impl ProfileConfig {
                 .unwrap_or(false),
             log_level: self
                 .log_level
-                .as_deref()
-                .unwrap_or("debug")
-                .parse::<LogLevel>()
-                .map_err(anyhow::Error::msg)
-                .context("profile.log_level field")?,
+                .unwrap_or(LogLevel::Debug),
             quiet: self
                 .quiet
                 .unwrap_or(false),
@@ -336,5 +327,79 @@ fs_cli:
         assert!(!false_app_config.reconnect);
         assert!(!false_app_config.events);
         assert!(!false_app_config.quiet);
+    }
+
+    #[test]
+    fn test_typed_field_parsing() {
+        let yaml_content = r#"
+fs_cli:
+  p1:
+    color: tag
+    log_level: warn
+    debug: 5
+    history_file: /tmp/hist
+"#;
+        let config: FsCliConfig = serde_yaml::from_str(yaml_content).unwrap();
+        let profile = config
+            .get_profile("p1")
+            .unwrap();
+        assert_eq!(profile.color, Some(crate::commands::ColorMode::Tag));
+        assert_eq!(profile.log_level, Some(crate::commands::LogLevel::Warning));
+        assert_eq!(profile.debug, Some(crate::esl_debug::EslDebugLevel::Debug5));
+        assert_eq!(
+            profile.history_file,
+            Some(std::path::PathBuf::from("/tmp/hist"))
+        );
+
+        let app = profile
+            .to_app_config()
+            .unwrap();
+        assert_eq!(app.color, crate::commands::ColorMode::Tag);
+        assert_eq!(app.log_level, crate::commands::LogLevel::Warning);
+        assert_eq!(app.debug, crate::esl_debug::EslDebugLevel::Debug5);
+        assert_eq!(
+            app.history_file,
+            Some(std::path::PathBuf::from("/tmp/hist"))
+        );
+    }
+
+    #[test]
+    fn test_typed_fields_invalid_rejects_at_load() {
+        let bad_color = r#"
+fs_cli:
+  p:
+    color: rainbow
+"#;
+        let result: Result<FsCliConfig, _> = serde_yaml::from_str(bad_color);
+        assert!(result.is_err());
+
+        let bad_log = r#"
+fs_cli:
+  p:
+    log_level: loudest
+"#;
+        let result: Result<FsCliConfig, _> = serde_yaml::from_str(bad_log);
+        assert!(result.is_err());
+
+        let bad_debug = r#"
+fs_cli:
+  p:
+    debug: 99
+"#;
+        let result: Result<FsCliConfig, _> = serde_yaml::from_str(bad_debug);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_config_round_trips() {
+        let default_cfg = FsCliConfig::default();
+        let yaml = serde_yaml::to_string(&default_cfg).unwrap();
+        let reparsed: FsCliConfig = serde_yaml::from_str(&yaml).unwrap();
+        let profile = reparsed
+            .get_profile("default")
+            .unwrap();
+        assert_eq!(profile.color, Some(crate::commands::ColorMode::Line));
+        assert_eq!(profile.log_level, Some(crate::commands::LogLevel::Debug));
+        assert_eq!(profile.debug, Some(crate::esl_debug::EslDebugLevel::None));
     }
 }
