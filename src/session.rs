@@ -23,6 +23,7 @@ use crossterm::{
 use freeswitch_esl_tokio::{
     ConnectionStatus, EslClient, EslEventStream, EslEventType, HeaderLookup,
 };
+use std::collections::HashMap;
 use std::io::{self, Write};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -99,22 +100,21 @@ pub async fn run_interactive_mode(
 
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
 
+    let mut ctx = CommandLoopCtx {
+        processor: &processor,
+        macros: &macros,
+        channel_provider: &channel_provider,
+        config,
+        cmd_rx: &mut cmd_rx,
+        quit_rx: &mut quit_rx,
+        completion_rx: &mut completion_rx,
+    };
+
     // Reconnection loop — each iteration is one connection session
     let session_result = loop {
         let mut event_task = spawn_event_consumer(events, printer.clone(), config.color);
 
-        let result = run_command_loop(
-            &client,
-            &processor,
-            &macros,
-            &channel_provider,
-            config,
-            &mut cmd_rx,
-            &mut quit_rx,
-            &mut completion_rx,
-            &mut event_task,
-        )
-        .await;
+        let result = run_command_loop(&client, &mut ctx, &mut event_task).await;
 
         event_task.abort();
 
@@ -287,17 +287,25 @@ fn spawn_event_consumer(
     })
 }
 
-/// Main command processing select! loop for one connection session
-#[allow(clippy::too_many_arguments)]
+/// Session-lifetime state shared across reconnect iterations.
+///
+/// Per-connection resources (`client`, `event_task`) are passed separately to
+/// `run_command_loop` so they can be swapped on reconnect without rebuilding
+/// this struct.
+struct CommandLoopCtx<'a> {
+    processor: &'a CommandProcessor,
+    macros: &'a HashMap<String, String>,
+    channel_provider: &'a ChannelProvider,
+    config: &'a AppConfig,
+    cmd_rx: &'a mut mpsc::UnboundedReceiver<String>,
+    quit_rx: &'a mut oneshot::Receiver<()>,
+    completion_rx: &'a mut mpsc::UnboundedReceiver<CompletionRequest>,
+}
+
+/// Main command processing select! loop for one connection session.
 async fn run_command_loop(
     client: &EslClient,
-    processor: &CommandProcessor,
-    macros: &std::collections::HashMap<String, String>,
-    channel_provider: &ChannelProvider,
-    config: &AppConfig,
-    cmd_rx: &mut mpsc::UnboundedReceiver<String>,
-    quit_rx: &mut oneshot::Receiver<()>,
-    completion_rx: &mut mpsc::UnboundedReceiver<CompletionRequest>,
+    ctx: &mut CommandLoopCtx<'_>,
     event_task: &mut JoinHandle<()>,
 ) -> SessionEnd {
     loop {
@@ -315,64 +323,60 @@ async fn run_command_loop(
                     _ => SessionEnd::Disconnected(None),
                 };
             }
-            Some(command) = cmd_rx.recv() => {
-                // Client-side commands
-                if command.starts_with('/') {
-                    match command.as_str() {
-                        "/help" => {
-                            processor.show_help(macros);
-                            continue;
-                        }
-                        "/clear" => {
-                            let mut stdout = io::stdout();
-                            let result: io::Result<()> = (|| {
-                                stdout.execute(Clear(ClearType::All))?;
-                                stdout.execute(MoveTo(0, 0))?;
-                                stdout.flush()
-                            })();
-                            if let Err(e) = result {
-                                warn!("Failed to clear terminal: {}", e);
-                            }
-                            continue;
-                        }
-                        _ => {
-                            if let Some(end) = execute_with_disconnect_check(
-                                client, processor, &command,
-                            ).await {
-                                return end;
-                            }
-                            continue;
-                        }
-                    }
-                }
-
-                if command == "help" {
-                    processor.show_help(macros);
-                    continue;
-                }
-
-                // Resolve function key shortcuts typed manually
-                let effective = parse_function_key(&command, macros)
-                    .unwrap_or(command);
-
-                if let Some(end) = execute_with_disconnect_check(
-                    client, processor, &effective,
-                ).await {
+            Some(command) = ctx.cmd_rx.recv() => {
+                if let Some(end) = handle_command_line(ctx.processor, ctx.macros, client, command).await {
                     return end;
                 }
             }
-            Some(request) = completion_rx.recv() => {
+            Some(request) = ctx.completion_rx.recv() => {
                 let completions = get_console_complete(
                     client, &request.line, request.pos,
-                    config.debug, channel_provider,
+                    ctx.config.debug, ctx.channel_provider,
                 ).await;
                 let _ = request.response_tx.send(completions);
             }
-            _ = &mut *quit_rx => {
+            _ = &mut *ctx.quit_rx => {
                 return SessionEnd::Quit;
             }
         }
     }
+}
+
+/// Dispatch one line from the readline thread. Returns `Some(end)` if the
+/// session should terminate, `None` to continue.
+async fn handle_command_line(
+    processor: &CommandProcessor,
+    macros: &HashMap<String, String>,
+    client: &EslClient,
+    command: String,
+) -> Option<SessionEnd> {
+    if command.starts_with('/') {
+        return match command.as_str() {
+            "/help" => {
+                processor.show_help(macros);
+                None
+            }
+            "/clear" => {
+                let mut stdout = io::stdout();
+                let result: io::Result<()> = (|| {
+                    stdout.execute(Clear(ClearType::All))?;
+                    stdout.execute(MoveTo(0, 0))?;
+                    stdout.flush()
+                })();
+                if let Err(e) = result {
+                    warn!("Failed to clear terminal: {}", e);
+                }
+                None
+            }
+            _ => execute_with_disconnect_check(client, processor, &command).await,
+        };
+    }
+    if command == "help" {
+        processor.show_help(macros);
+        return None;
+    }
+    let effective = parse_function_key(&command, macros).unwrap_or(command);
+    execute_with_disconnect_check(client, processor, &effective).await
 }
 
 /// Execute a command and check for connection errors.
