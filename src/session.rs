@@ -249,19 +249,12 @@ fn format_channel_event(
         .unwrap_or("?");
 
     let line = if event_type == EslEventType::ChannelHangup {
-        let cause = event.hangup_cause();
-        format!(
-            "[{}] {} {} ({})",
-            label,
-            uuid,
-            channel,
-            cause.map_or_else(
-                |e| e.to_string(),
-                |h| h
-                    .unwrap()
-                    .to_string()
-            )
-        )
+        let cause_str = match event.hangup_cause() {
+            Ok(Some(c)) => c.to_string(),
+            Ok(None) => "unknown".to_string(),
+            Err(e) => e.to_string(),
+        };
+        format!("[{}] {} {} ({})", label, uuid, channel, cause_str)
     } else {
         let cid_num = event
             .caller_id_number()
