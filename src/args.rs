@@ -1,7 +1,7 @@
 //! Command-line argument parsing for fs_cli-rs
 
 use crate::commands::{ColorMode, LogLevel};
-use crate::config::{AppConfig, FsCliConfig};
+use crate::config::{AppConfig, FsCliConfig, ProfileConfig};
 use crate::esl_debug::EslDebugLevel;
 use anyhow::Result;
 use clap::Parser;
@@ -85,13 +85,11 @@ impl Args {
     pub fn parse_and_merge() -> Result<AppConfig> {
         let args = Self::parse();
 
-        // Load configuration
         let config = FsCliConfig::load(
             args.config
                 .clone(),
         )?;
 
-        // Handle --list-profiles
         if args.list_profiles {
             println!("Available profiles:");
             let mut profile_names = config.get_profile_names();
@@ -102,72 +100,196 @@ impl Args {
             std::process::exit(0);
         }
 
-        // Get profile name (default to "default")
         let profile_name = args
             .profile
             .as_deref()
             .unwrap_or("default");
+        let explicitly_named = args
+            .profile
+            .is_some();
 
-        // Load profile configuration
         let mut app_config = match config.get_profile(profile_name) {
             Ok(profile) => profile.to_app_config()?,
+            Err(_) if !explicitly_named => ProfileConfig::default().to_app_config()?,
             Err(_) => {
-                // If profile doesn't exist, create a default config and warn
-                eprintln!(
-                    "Warning: Profile '{}' not found, using defaults",
-                    profile_name
-                );
-                config
-                    .get_profile("default")
-                    .unwrap_or_else(|_| crate::config::ProfileConfig::default())
-                    .to_app_config()?
+                let mut names = config.get_profile_names();
+                names.sort();
+                return Err(anyhow::anyhow!(
+                    "Profile '{}' not found. Available profiles: {}",
+                    profile_name,
+                    names.join(", ")
+                ));
             }
         };
 
-        // Override with command-line arguments
-        if let Some(host) = args.host {
-            app_config.host = host;
-        }
-        if let Some(port) = args.port {
-            app_config.port = port;
-        }
-        if let Some(password) = args.password {
-            app_config.password = password;
-        }
-        if let Some(user) = args.user {
-            app_config.user = Some(user);
-        }
-        if let Some(debug) = args.debug {
-            app_config.debug = EslDebugLevel::from_u8(debug)?;
-        }
-        if let Some(color) = args.color {
-            app_config.color = color;
-        }
-        if let Some(history_file) = args.history_file {
-            app_config.history_file = Some(history_file);
-        }
-        if let Some(timeout) = args.timeout {
-            app_config.timeout = timeout;
-        }
-        if let Some(retry) = args.retry {
-            app_config.retry = retry;
-        }
-        if let Some(reconnect) = args.reconnect {
-            app_config.reconnect = reconnect;
-        }
-        if let Some(events) = args.events {
-            app_config.events = events;
-        }
-        if let Some(log_level) = args.log_level {
-            app_config.log_level = log_level;
-        }
-        if let Some(quiet) = args.quiet {
-            app_config.quiet = quiet;
-        }
-
-        // Execute commands always come from CLI args
-        app_config.execute = args.execute;
-
+        args.apply_to(&mut app_config)?;
         Ok(app_config)
+    }
+
+    /// Apply CLI argument overrides to an already-loaded AppConfig.
+    ///
+    /// Called by `parse_and_merge`; also directly usable in tests without clap parsing.
+    pub fn apply_to(&self, config: &mut AppConfig) -> Result<()> {
+        if let Some(host) = &self.host {
+            config.host = host.clone();
+        }
+        if let Some(port) = self.port {
+            config.port = port;
+        }
+        if let Some(password) = &self.password {
+            config.password = password.clone();
+        }
+        if let Some(user) = &self.user {
+            config.user = Some(user.clone());
+        }
+        if let Some(debug) = self.debug {
+            config.debug = EslDebugLevel::from_u8(debug)?;
+        }
+        if let Some(color) = self
+            .color
+            .clone()
+        {
+            config.color = color;
+        }
+        if let Some(history_file) = &self.history_file {
+            config.history_file = Some(history_file.clone());
+        }
+        if let Some(timeout) = self.timeout {
+            config.timeout = timeout;
+        }
+        if let Some(retry) = self.retry {
+            config.retry = retry;
+        }
+        if let Some(reconnect) = self.reconnect {
+            config.reconnect = reconnect;
+        }
+        if let Some(events) = self.events {
+            config.events = events;
+        }
+        if let Some(log_level) = self
+            .log_level
+            .clone()
+        {
+            config.log_level = log_level;
+        }
+        if let Some(quiet) = self.quiet {
+            config.quiet = quiet;
+        }
+        config.execute = self
+            .execute
+            .clone();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use crate::commands::{ColorMode, LogLevel};
+    use crate::config::AppConfig;
+    use crate::esl_debug::EslDebugLevel;
+    use std::collections::HashMap;
+
+    fn make_args_no_overrides() -> Args {
+        Args {
+            profile: None,
+            host: None,
+            port: None,
+            password: None,
+            user: None,
+            debug: None,
+            color: None,
+            execute: Vec::new(),
+            history_file: None,
+            timeout: None,
+            retry: None,
+            reconnect: None,
+            events: None,
+            log_level: None,
+            quiet: None,
+            config: None,
+            list_profiles: false,
+        }
+    }
+
+    fn base_app_config() -> AppConfig {
+        AppConfig {
+            host: "localhost".to_string(),
+            port: 8021,
+            password: "test".to_string(),
+            user: None,
+            debug: EslDebugLevel::None,
+            color: ColorMode::Line,
+            history_file: None,
+            timeout: 2000,
+            retry: true,
+            reconnect: true,
+            events: true,
+            log_level: LogLevel::Debug,
+            quiet: true,
+            macros: HashMap::new(),
+            execute: Vec::new(),
+            max_auto_complete_uuid: 32,
+        }
+    }
+
+    #[test]
+    fn test_apply_to_preserves_config_when_no_cli_overrides() {
+        let mut config = base_app_config();
+        make_args_no_overrides()
+            .apply_to(&mut config)
+            .unwrap();
+        assert!(config.retry);
+        assert!(config.reconnect);
+        assert!(config.events);
+        assert!(config.quiet);
+    }
+
+    #[test]
+    fn test_apply_to_overrides_config_with_cli_args() {
+        let mut config = base_app_config();
+        config.retry = false;
+        config.reconnect = false;
+        config.events = false;
+        config.quiet = false;
+
+        let mut args = make_args_no_overrides();
+        args.retry = Some(true);
+        args.reconnect = Some(true);
+        args.events = Some(true);
+        args.quiet = Some(true);
+
+        args.apply_to(&mut config)
+            .unwrap();
+        assert!(config.retry);
+        assert!(config.reconnect);
+        assert!(config.events);
+        assert!(config.quiet);
+    }
+
+    #[test]
+    fn test_apply_to_host_and_port_override() {
+        let mut config = base_app_config();
+        let mut args = make_args_no_overrides();
+        args.host = Some("192.168.1.1".to_string());
+        args.port = Some(9021);
+
+        args.apply_to(&mut config)
+            .unwrap();
+        assert_eq!(config.host, "192.168.1.1");
+        assert_eq!(config.port, 9021);
+    }
+
+    #[test]
+    fn test_apply_to_execute_always_replaced() {
+        let mut config = base_app_config();
+        config.execute = vec!["prior".to_string()];
+
+        let mut args = make_args_no_overrides();
+        args.execute = vec!["status".to_string(), "version".to_string()];
+
+        args.apply_to(&mut config)
+            .unwrap();
+        assert_eq!(config.execute, vec!["status", "version"]);
     }
 }

@@ -1,7 +1,7 @@
 //! Configuration management for fs_cli-rs
 
 use crate::commands::{ColorMode, LogLevel};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ pub struct ProfileConfig {
     /// Function key macros
     pub macros: Option<HashMap<String, String>>,
 
-    /// Maximum number of channels to show in auto-complete (default: 32)
+    /// Maximum number of channels to show in auto-complete
     pub max_auto_complete_uuid: Option<u32>,
 }
 
@@ -134,7 +134,8 @@ impl ProfileConfig {
                 .as_deref()
                 .unwrap_or("line")
                 .parse::<ColorMode>()
-                .map_err(|e| anyhow::anyhow!("Invalid color mode: {}", e))?,
+                .map_err(anyhow::Error::msg)
+                .context("profile.color field")?,
             history_file: self
                 .history_file
                 .as_ref()
@@ -156,7 +157,8 @@ impl ProfileConfig {
                 .as_deref()
                 .unwrap_or("debug")
                 .parse::<LogLevel>()
-                .map_err(|e| anyhow::anyhow!("Invalid log level: {}", e))?,
+                .map_err(anyhow::Error::msg)
+                .context("profile.log_level field")?,
             quiet: self
                 .quiet
                 .unwrap_or(false),
@@ -205,12 +207,10 @@ impl FsCliConfig {
         // Try to load from existing config files
         for path in &config_paths {
             if path.exists() {
-                let content = std::fs::read_to_string(path).map_err(|e| {
-                    anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e)
-                })?;
-                let config: Self = serde_yaml::from_str(&content).map_err(|e| {
-                    anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e)
-                })?;
+                let content = std::fs::read_to_string(path)
+                    .with_context(|| format!("Failed to read config file {}", path.display()))?;
+                let config: Self = serde_yaml::from_str(&content)
+                    .with_context(|| format!("Failed to parse config file {}", path.display()))?;
                 return Ok(config);
             }
         }
@@ -229,13 +229,19 @@ impl FsCliConfig {
                         e
                     );
                 }
-                let yaml_content = serde_yaml::to_string(&default_config).unwrap_or_default();
-                if let Err(e) = std::fs::write(&config_path, &yaml_content) {
-                    warn!(
-                        "Could not write default config to {}: {}",
-                        config_path.display(),
-                        e
-                    );
+                match serde_yaml::to_string(&default_config) {
+                    Ok(yaml_content) => {
+                        if let Err(e) = std::fs::write(&config_path, yaml_content) {
+                            warn!(
+                                "Could not write default config to {}: {}",
+                                config_path.display(),
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Could not serialize default config: {}", e);
+                    }
                 }
             }
         }
@@ -247,17 +253,14 @@ impl FsCliConfig {
     fn get_default_config_paths() -> Vec<PathBuf> {
         let mut paths = Vec::new();
 
-        // User config directory (~/.config/fs_cli.yaml)
         if let Some(config_dir) = dirs::config_dir() {
             paths.push(config_dir.join("fs_cli.yaml"));
         }
 
-        // User home directory (~/.fs_cli.yaml)
         if let Some(home_dir) = dirs::home_dir() {
             paths.push(home_dir.join(".fs_cli.yaml"));
         }
 
-        // System-wide config (/etc/freeswitch/fs_cli.yaml)
         paths.push(PathBuf::from("/etc/freeswitch/fs_cli.yaml"));
 
         paths
@@ -347,95 +350,5 @@ fs_cli:
         assert!(!false_app_config.reconnect);
         assert!(!false_app_config.events);
         assert!(!false_app_config.quiet);
-    }
-
-    #[test]
-    fn test_profile_merging_with_cli_args() {
-        // Simulate CLI args behavior
-        struct MockCliArgs {
-            retry: Option<bool>,
-            reconnect: Option<bool>,
-            events: Option<bool>,
-            quiet: Option<bool>,
-        }
-
-        // Test 1: Config has true values, no CLI override
-        let mut config = AppConfig {
-            host: "localhost".to_string(),
-            port: 8021,
-            password: "test".to_string(),
-            user: None,
-            debug: crate::esl_debug::EslDebugLevel::None,
-            color: ColorMode::Line,
-            history_file: None,
-            timeout: 2000,
-            retry: true,
-            reconnect: true,
-            events: true,
-            log_level: LogLevel::Debug,
-            quiet: true,
-            macros: HashMap::new(),
-            execute: Vec::new(),
-            max_auto_complete_uuid: 32,
-        };
-
-        let cli_args = MockCliArgs {
-            retry: None,
-            reconnect: None,
-            events: None,
-            quiet: None,
-        };
-
-        // Simulate the merging logic from args.rs
-        if let Some(retry) = cli_args.retry {
-            config.retry = retry;
-        }
-        if let Some(reconnect) = cli_args.reconnect {
-            config.reconnect = reconnect;
-        }
-        if let Some(events) = cli_args.events {
-            config.events = events;
-        }
-        if let Some(quiet) = cli_args.quiet {
-            config.quiet = quiet;
-        }
-
-        // Config values should remain unchanged
-        assert!(config.retry);
-        assert!(config.reconnect);
-        assert!(config.events);
-        assert!(config.quiet);
-
-        // Test 2: Config has false values, CLI overrides to true
-        config.retry = false;
-        config.reconnect = false;
-        config.events = false;
-        config.quiet = false;
-
-        let cli_args_override = MockCliArgs {
-            retry: Some(true),
-            reconnect: Some(true),
-            events: Some(true),
-            quiet: Some(true),
-        };
-
-        if let Some(retry) = cli_args_override.retry {
-            config.retry = retry;
-        }
-        if let Some(reconnect) = cli_args_override.reconnect {
-            config.reconnect = reconnect;
-        }
-        if let Some(events) = cli_args_override.events {
-            config.events = events;
-        }
-        if let Some(quiet) = cli_args_override.quiet {
-            config.quiet = quiet;
-        }
-
-        // CLI should override config
-        assert!(config.retry);
-        assert!(config.reconnect);
-        assert!(config.events);
-        assert!(config.quiet);
     }
 }
