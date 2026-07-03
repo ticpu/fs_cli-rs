@@ -1,11 +1,12 @@
 //! Channel information management for enhanced UUID completion
 
+use crate::console_complete::Completion;
 use anyhow::{Context, Result};
 use freeswitch_esl_tokio::EslClient;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /// Channel information from FreeSWITCH JSON output
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ChannelInfo {
     pub uuid: String,
     pub created: String,
@@ -36,11 +37,15 @@ impl ChannelProvider {
         Self { max_channels }
     }
 
-    /// Get enhanced UUID completions with channel info
-    /// Returns formatted strings like: "uuid timestamp name (state)"
-    /// Returns None if should fallback to default completion (too many channels)
-    pub async fn get_uuid_completions(&self, client: &EslClient) -> Result<Option<Vec<String>>> {
-        // First check channel count to avoid flooding
+    /// Get enhanced UUID completions with channel info.
+    ///
+    /// Returns `None` if the channel count exceeds the configured limit (fall back
+    /// to default console_complete). Each `Completion::Uuid` carries the full
+    /// channel line as `display` and the bare UUID as `replacement`.
+    pub async fn get_uuid_completions(
+        &self,
+        client: &EslClient,
+    ) -> Result<Option<Vec<Completion>>> {
         let count = self
             .get_channel_count(client)
             .await?;
@@ -50,7 +55,6 @@ impl ChannelProvider {
         }
 
         if count > self.max_channels {
-            // Too many channels - fallback to default completion silently
             tracing::debug!(
                 "Too many channels ({}) for enhanced completion, limit is {}. Falling back to default.",
                 count, self.max_channels
@@ -58,20 +62,33 @@ impl ChannelProvider {
             return Ok(None);
         }
 
-        // Fetch channel details
         let channels = self
             .get_channels(client)
             .await?;
 
-        // Format for completion display
-        let mut completions = Vec::new();
-        for channel in channels {
-            let formatted = format!(
-                "{} {} {} ({})",
-                channel.uuid, channel.created, channel.name, channel.state
-            );
-            completions.push(formatted);
-        }
+        let completions = channels
+            .into_iter()
+            .map(|ch| {
+                let display = if !ch
+                    .cid_num
+                    .is_empty()
+                    || !ch
+                        .cid_name
+                        .is_empty()
+                {
+                    format!(
+                        "{} {} {} ({}) <{}> {}",
+                        ch.uuid, ch.created, ch.name, ch.state, ch.cid_num, ch.cid_name
+                    )
+                } else {
+                    format!("{} {} {} ({})", ch.uuid, ch.created, ch.name, ch.state)
+                };
+                Completion::Uuid {
+                    uuid: ch.uuid,
+                    display,
+                }
+            })
+            .collect();
 
         Ok(Some(completions))
     }
@@ -103,7 +120,6 @@ impl ChannelProvider {
             .with_context(|| format!("Failed to parse JSON response for '{}'", command))
     }
 
-    /// Get channel count using "show channels count as json"
     async fn get_channel_count(&self, client: &EslClient) -> Result<u32> {
         let resp = self
             .fetch_channels_json(client, "show channels count as json")
@@ -111,7 +127,6 @@ impl ChannelProvider {
         Ok(resp.row_count)
     }
 
-    /// Get channel details using "show channels as json"
     async fn get_channels(&self, client: &EslClient) -> Result<Vec<ChannelInfo>> {
         let resp = self
             .fetch_channels_json(client, "show channels as json")

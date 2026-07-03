@@ -2,6 +2,7 @@
 
 use crate::completion::FsCliCompleter;
 use crate::config::AppConfig;
+use crate::console_complete::Completion;
 use crate::printer::Printer;
 use anyhow::Result;
 use gethostname::gethostname;
@@ -17,7 +18,7 @@ use tracing::{error, warn};
 pub struct CompletionRequest {
     pub line: String,
     pub pos: usize,
-    pub response_tx: std::sync::mpsc::SyncSender<Vec<String>>,
+    pub response_tx: std::sync::mpsc::SyncSender<Vec<Completion>>,
 }
 
 /// Default FreeSWITCH function key bindings

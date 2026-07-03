@@ -1,5 +1,6 @@
 //! Tab completion support for fs_cli-rs
 
+use crate::console_complete::Completion;
 use crate::esl_debug::EslDebugLevel;
 use crate::readline::CompletionRequest;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
@@ -10,9 +11,6 @@ use rustyline::{Context, Helper};
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::time::Duration;
 use tokio::sync::mpsc;
-
-/// Standard UUID length in characters (8-4-4-4-12 format)
-const UUID_LEN: usize = 36;
 
 /// Find the longest common prefix among a list of strings
 fn find_common_prefix(strings: &[&str]) -> String {
@@ -225,7 +223,7 @@ impl FsCliCompleter {
     }
 
     /// Get ESL-based completions from FreeSWITCH
-    fn get_esl_completions(&self, line: &str, pos: usize) -> Vec<String> {
+    fn get_esl_completions(&self, line: &str, pos: usize) -> Vec<Completion> {
         self.debug_level
             .debug_print(
                 EslDebugLevel::Debug6,
@@ -236,9 +234,8 @@ impl FsCliCompleter {
             self.debug_level
                 .debug_print(EslDebugLevel::Debug6, "Have completion channel");
 
-            let (response_tx, response_rx) = std::sync::mpsc::sync_channel::<Vec<String>>(1);
+            let (response_tx, response_rx) = std::sync::mpsc::sync_channel::<Vec<Completion>>(1);
 
-            // Send completion request to main thread
             let request = CompletionRequest {
                 line: line.to_string(),
                 pos,
@@ -265,7 +262,7 @@ impl FsCliCompleter {
                     self.debug_level
                         .debug_print(
                             EslDebugLevel::Debug6,
-                            &format!("Received completions: {:?}", completions),
+                            &format!("Received {} completions", completions.len()),
                         );
                     completions
                 }
@@ -324,39 +321,29 @@ impl Completer for FsCliCompleter {
                 let current_word = &line[start..pos];
 
                 for completion in esl_completions {
-                    // Handle write= directive specially
-                    if let Some(replacement_text) = completion.strip_prefix("WRITE_DIRECTIVE:") {
-                        // Skip "WRITE_DIRECTIVE:"
-                        candidates.push(Pair {
-                            display: replacement_text.to_string(),
-                            replacement: replacement_text.to_string(),
-                        });
-                    } else if completion.len() > UUID_LEN
-                        && completion
-                            .chars()
-                            .nth(UUID_LEN)
-                            == Some(' ')
-                        && completion
-                            .chars()
-                            .take(UUID_LEN)
-                            .all(|c| c.is_ascii_hexdigit() || c == '-')
-                    {
-                        // This looks like UUID completion format: "uuid timestamp name (state)"
-                        // Extract just the UUID (first UUID_LEN characters) for replacement
-                        let uuid = &completion[..UUID_LEN];
-                        if uuid.starts_with(current_word) {
+                    match completion {
+                        Completion::Write(text) => {
                             candidates.push(Pair {
-                                display: completion.clone(),
-                                replacement: format!("{} ", uuid),
+                                display: text.clone(),
+                                replacement: text,
                             });
                         }
-                    } else if completion.starts_with(current_word) {
-                        // Return the full completion as replacement since rustyline
-                        // will replace from start position, not append at current position
-                        candidates.push(Pair {
-                            display: completion.clone(),
-                            replacement: completion.clone(),
-                        });
+                        Completion::Uuid { uuid, display } => {
+                            if uuid.starts_with(current_word) {
+                                candidates.push(Pair {
+                                    display,
+                                    replacement: format!("{} ", uuid),
+                                });
+                            }
+                        }
+                        Completion::Candidate(s) => {
+                            if s.starts_with(current_word) {
+                                candidates.push(Pair {
+                                    display: s.clone(),
+                                    replacement: s,
+                                });
+                            }
+                        }
                     }
                 }
 
@@ -388,9 +375,6 @@ impl Completer for FsCliCompleter {
                         for candidate in &mut candidates {
                             candidate.replacement = common_prefix.clone();
                         }
-                    } else {
-                        // No useful common prefix - return each full completion for list display
-                        // Keep the full replacements as they are for proper list display
                     }
                 }
 
