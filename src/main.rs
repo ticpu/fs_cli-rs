@@ -108,21 +108,11 @@ pub async fn connect_to_freeswitch(config: &AppConfig) -> Result<(EslClient, Esl
     Ok((client, events))
 }
 
-async fn connect_to_freeswitch_with_retry(
-    config: &AppConfig,
-) -> Result<(EslClient, EslEventStream)> {
-    if !config.retry {
-        return connect_to_freeswitch(config).await;
-    }
-
-    info!(
-        "Retry mode enabled - will retry every {} ms",
-        config.timeout
-    );
-
+/// Retry connecting forever. Never returns — loops until a connection succeeds.
+pub async fn connect_retry_forever(config: &AppConfig) -> (EslClient, EslEventStream) {
     loop {
         match connect_to_freeswitch(config).await {
-            Ok(pair) => return Ok(pair),
+            Ok(pair) => return pair,
             Err(e) => {
                 warn!("Connection attempt failed: {}", e);
                 info!("Retrying in {} ms...", config.timeout);
@@ -130,6 +120,19 @@ async fn connect_to_freeswitch_with_retry(
             }
         }
     }
+}
+
+async fn connect_to_freeswitch_with_retry(
+    config: &AppConfig,
+) -> Result<(EslClient, EslEventStream)> {
+    if !config.retry {
+        return connect_to_freeswitch(config).await;
+    }
+    info!(
+        "Retry mode enabled - will retry every {} ms",
+        config.timeout
+    );
+    Ok(connect_retry_forever(config).await)
 }
 
 /// Check if error indicates connection loss

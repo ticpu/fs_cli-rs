@@ -10,7 +10,7 @@ use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::Printer;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
 use crate::{
-    connect_to_freeswitch, enable_logging, is_connection_error, is_permission_denied,
+    connect_retry_forever, enable_logging, is_connection_error, is_permission_denied,
     subscribe_heartbeat, subscribe_to_events,
 };
 use anyhow::Result;
@@ -143,15 +143,12 @@ pub async fn run_interactive_mode(
                     Some(r) => warn!("Connection lost ({}), reconnecting...", r),
                     None => warn!("Connection lost, reconnecting..."),
                 }
-                match reconnect_loop(config).await {
-                    Ok((new_client, new_events)) => {
-                        client = new_client;
-                        events = new_events;
-                        setup_subscriptions(&client, config).await;
-                        continue;
-                    }
-                    Err(e) => break Err(e),
-                }
+                let (new_client, new_events) = connect_retry_forever(config).await;
+                info!("Reconnected successfully");
+                client = new_client;
+                events = new_events;
+                setup_subscriptions(&client, config).await;
+                continue;
             }
         }
     };
@@ -206,23 +203,6 @@ async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
     if !config.quiet {
         if let Err(e) = enable_logging(client, config.log_level).await {
             warn!("Failed to enable logging: {}", e);
-        }
-    }
-}
-
-/// Retry connecting until success
-async fn reconnect_loop(config: &AppConfig) -> Result<(EslClient, EslEventStream)> {
-    loop {
-        match connect_to_freeswitch(config).await {
-            Ok(pair) => {
-                info!("Reconnected successfully");
-                return Ok(pair);
-            }
-            Err(e) => {
-                warn!("Reconnection attempt failed: {}", e);
-                info!("Retrying in {} ms...", config.timeout);
-                tokio::time::sleep(tokio::time::Duration::from_millis(config.timeout)).await;
-            }
         }
     }
 }
