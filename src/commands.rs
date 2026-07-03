@@ -1,9 +1,9 @@
 //! Command processing and execution for fs_cli-rs
 
 use crate::esl_debug::EslDebugLevel;
-use anyhow::{Error, Result};
+use anyhow::{anyhow, Error, Result};
 use colored::*;
-use freeswitch_esl_tokio::EslClient;
+use freeswitch_esl_tokio::{EslClient, EslError};
 use rustyline::ExternalPrinter;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -238,6 +238,27 @@ impl CommandProcessor {
             .await;
     }
 
+    /// Call the FreeSWITCH API, check success, and return the response body.
+    ///
+    /// Transport errors propagate as EslError. A non-success API response
+    /// returns an Err carrying the reply text (without "API Error:" prefix —
+    /// callers add their own framing).
+    async fn api_body(&self, client: &EslClient, command: &str) -> Result<String> {
+        let response = client
+            .api(command)
+            .await?;
+        if !response.is_success() {
+            let reply = response
+                .reply_text()
+                .unwrap_or("unknown error");
+            return Err(anyhow!("{}", reply));
+        }
+        Ok(response
+            .body()
+            .unwrap_or_default()
+            .to_string())
+    }
+
     /// Execute a FreeSWITCH command
     pub async fn execute_command(&self, client: &EslClient, command: &str) -> Result<()> {
         self.debug_level
@@ -246,7 +267,6 @@ impl CommandProcessor {
                 &format!("execute_command called with: '{}'", command),
             );
 
-        // Handle special commands
         if let Some(result) = self
             .handle_special_command(client, command)
             .await?
@@ -256,44 +276,39 @@ impl CommandProcessor {
             return Ok(());
         }
 
-        // Execute as API command
-        match client
-            .api(command)
+        match self
+            .api_body(client, command)
             .await
         {
-            Ok(response) => {
-                if !response.is_success() {
-                    if let Some(reply) = response.reply_text() {
-                        let error_msg = if !self.no_color() {
-                            format!(
-                                "{}: {}",
-                                "API Error"
-                                    .red()
-                                    .bold(),
-                                reply
-                            )
-                        } else {
-                            format!("API Error: {}", reply)
-                        };
-                        self.print_error(&error_msg)
-                            .await;
-                        return Ok(()); // Don't treat API errors as fatal
-                    }
-                }
-
-                let body = response
-                    .body()
-                    .unwrap_or_default();
+            Ok(body) => {
                 if !body
                     .trim()
                     .is_empty()
                 {
-                    self.print_message(body)
+                    self.print_message(&body)
                         .await;
                 }
             }
+            Err(e)
+                if e.downcast_ref::<EslError>()
+                    .is_some() =>
+            {
+                return Err(e);
+            }
             Err(e) => {
-                return Err(e.into());
+                let error_msg = if !self.no_color() {
+                    format!(
+                        "{}: {}",
+                        "API Error"
+                            .red()
+                            .bold(),
+                        e
+                    )
+                } else {
+                    format!("API Error: {}", e)
+                };
+                self.print_error(&error_msg)
+                    .await;
             }
         }
 
@@ -339,88 +354,13 @@ impl CommandProcessor {
                     self.handle_log_command(client, &parts[1..])
                         .await
                 }
-                "show" if parts.len() > 1 => {
-                    self.handle_show_command(client, &parts[1..])
-                        .await
-                }
-                "status" => {
-                    let response = client
-                        .api("status")
-                        .await?;
-                    Ok(Some(
-                        response
-                            .body()
-                            .unwrap_or_default()
-                            .to_string(),
-                    ))
-                }
-                "version" => {
-                    let response = client
-                        .api("version")
-                        .await?;
-                    Ok(Some(
-                        response
-                            .body()
-                            .unwrap_or_default()
-                            .to_string(),
-                    ))
-                }
                 "uptime" => {
-                    let response = client
-                        .api("status")
+                    let body = self
+                        .api_body(client, "status")
                         .await?;
-                    Ok(Some(
-                        self.extract_uptime(
-                            response
-                                .body()
-                                .unwrap_or_default(),
-                        ),
-                    ))
+                    Ok(Some(self.extract_uptime(&body)))
                 }
-                "reload" => {
-                    if parts.len() > 1 {
-                        let module = parts[1];
-                        let response = client
-                            .api(&format!("reload {}", module))
-                            .await?;
-                        Ok(Some(format!(
-                            "Reloaded module: {}\n{}",
-                            module,
-                            response
-                                .body()
-                                .unwrap_or_default()
-                        )))
-                    } else {
-                        let response = client
-                            .api("reloadxml")
-                            .await?;
-                        Ok(Some(format!(
-                            "Reloaded XML configuration\n{}",
-                            response
-                                .body()
-                                .unwrap_or_default()
-                        )))
-                    }
-                }
-                "originate" => {
-                    if parts.len() >= 3 {
-                        let call_string = parts[1..].join(" ");
-                        let response = client
-                            .api(&format!("originate {}", call_string))
-                            .await?;
-                        Ok(Some(format!(
-                            "Originate command executed\n{}",
-                            response
-                                .body()
-                                .unwrap_or_default()
-                        )))
-                    } else {
-                        Ok(Some(
-                            "Usage: originate <call_url> <destination>".to_string(),
-                        ))
-                    }
-                }
-                _ => Ok(None), // Not a special command
+                _ => Ok(None),
             },
         }
     }
@@ -464,31 +404,6 @@ impl CommandProcessor {
                     .unwrap_or("Unknown error")
             )))
         }
-    }
-
-    /// Handle 'show' commands with enhanced formatting
-    async fn handle_show_command(
-        &self,
-        client: &EslClient,
-        parts: &[&str],
-    ) -> Result<Option<String>> {
-        if parts.is_empty() {
-            return Ok(Some(
-                "Usage: show <channels|calls|registrations|modules|...>".to_string(),
-            ));
-        }
-
-        let command = format!("show {}", parts.join(" "));
-
-        let response = client
-            .api(&command)
-            .await?;
-        Ok(Some(
-            response
-                .body()
-                .unwrap_or_default()
-                .to_string(),
-        ))
     }
 
     /// Extract uptime information from status output
