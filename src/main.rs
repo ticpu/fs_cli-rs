@@ -30,12 +30,16 @@ async fn main() -> Result<()> {
 
     config
         .debug
-        .debug_print(EslDebugLevel::Debug, "About to connect to FreeSWITCH");
+        .debug_print(EslDebugLevel::Debug, || {
+            "About to connect to FreeSWITCH".to_string()
+        });
     let (client, events) = match connect_to_freeswitch_with_retry(&config).await {
         Ok(pair) => {
             config
                 .debug
-                .debug_print(EslDebugLevel::Debug, "Successfully connected to FreeSWITCH");
+                .debug_print(EslDebugLevel::Debug, || {
+                    "Successfully connected to FreeSWITCH".to_string()
+                });
             pair
         }
         Err(e) => {

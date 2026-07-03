@@ -225,14 +225,15 @@ impl FsCliCompleter {
     /// Get ESL-based completions from FreeSWITCH
     fn get_esl_completions(&self, line: &str, pos: usize) -> Vec<Completion> {
         self.debug_level
-            .debug_print(
-                EslDebugLevel::Debug6,
-                &format!("get_esl_completions called for '{}' pos {}", line, pos),
-            );
+            .debug_print(EslDebugLevel::Debug6, || {
+                format!("get_esl_completions called for '{}' pos {}", line, pos)
+            });
 
         if let Some(completion_tx) = &self.completion_tx {
             self.debug_level
-                .debug_print(EslDebugLevel::Debug6, "Have completion channel");
+                .debug_print(EslDebugLevel::Debug6, || {
+                    "Have completion channel".to_string()
+                });
 
             let (response_tx, response_rx) = std::sync::mpsc::sync_channel::<Vec<Completion>>(1);
 
@@ -247,37 +248,38 @@ impl FsCliCompleter {
                 .is_err()
             {
                 self.debug_level
-                    .debug_print(EslDebugLevel::Debug6, "Failed to send completion request");
+                    .debug_print(EslDebugLevel::Debug6, || {
+                        "Failed to send completion request".to_string()
+                    });
                 return Vec::new();
             }
 
             self.debug_level
-                .debug_print(
-                    EslDebugLevel::Debug6,
-                    "Sent completion request, waiting for response...",
-                );
+                .debug_print(EslDebugLevel::Debug6, || {
+                    "Sent completion request, waiting for response...".to_string()
+                });
 
             match response_rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(completions) => {
                     self.debug_level
-                        .debug_print(
-                            EslDebugLevel::Debug6,
-                            &format!("Received {} completions", completions.len()),
-                        );
+                        .debug_print(EslDebugLevel::Debug6, || {
+                            format!("Received {} completions", completions.len())
+                        });
                     completions
                 }
                 Err(e) => {
                     self.debug_level
-                        .debug_print(
-                            EslDebugLevel::Debug6,
-                            &format!("Completion response error: {}", e),
-                        );
+                        .debug_print(EslDebugLevel::Debug6, || {
+                            format!("Completion response error: {}", e)
+                        });
                     Vec::new()
                 }
             }
         } else {
             self.debug_level
-                .debug_print(EslDebugLevel::Debug6, "No completion channel available");
+                .debug_print(EslDebugLevel::Debug6, || {
+                    "No completion channel available".to_string()
+                });
             Vec::new()
         }
     }

@@ -177,10 +177,9 @@ impl CommandProcessor {
     /// Execute a FreeSWITCH command
     pub async fn execute_command(&self, client: &EslClient, command: &str) -> Result<()> {
         self.debug_level
-            .debug_print(
-                EslDebugLevel::Debug5,
-                &format!("execute_command called with: '{}'", command),
-            );
+            .debug_print(EslDebugLevel::Debug5, || {
+                format!("execute_command called with: '{}'", command)
+            });
 
         if let Some(result) = self
             .handle_special_command(client, command)
@@ -238,23 +237,21 @@ impl CommandProcessor {
             .collect();
         if parts.is_empty() {
             self.debug_level
-                .debug_print(
-                    EslDebugLevel::Debug6,
-                    "handle_special_command: empty command",
-                );
+                .debug_print(EslDebugLevel::Debug6, || {
+                    "handle_special_command: empty command".to_string()
+                });
             return Ok(None);
         }
 
         self.debug_level
-            .debug_print(
-                EslDebugLevel::Debug5,
-                &format!("handle_special_command: parts[0] = '{}'", parts[0]),
-            );
+            .debug_print(EslDebugLevel::Debug5, || {
+                format!("handle_special_command: parts[0] = '{}'", parts[0])
+            });
 
         match parts[0] {
             "/log" => {
                 self.debug_level
-                    .debug_print(EslDebugLevel::Debug6, "Matched /log command");
+                    .debug_print(EslDebugLevel::Debug6, || "Matched /log command".to_string());
                 self.handle_log_command(client, &parts[1..])
                     .await
             }

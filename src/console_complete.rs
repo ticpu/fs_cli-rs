@@ -34,7 +34,7 @@ pub async fn get_console_complete(
         .starts_with("uuid_")
         && line.contains(' ');
 
-    debug_level.debug_print(EslDebugLevel::Debug6, &format!("ESL API: {}", cmd));
+    debug_level.debug_print(EslDebugLevel::Debug6, || format!("ESL API: {}", cmd));
 
     if is_uuid_command {
         match channel_provider
@@ -42,27 +42,24 @@ pub async fn get_console_complete(
             .await
         {
             Ok(Some(enhanced_completions)) => {
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!(
+                debug_level.debug_print(EslDebugLevel::Debug6, || {
+                    format!(
                         "Using enhanced UUID completion with {} channels",
                         enhanced_completions.len()
-                    ),
-                );
+                    )
+                });
                 return enhanced_completions;
             }
             Ok(None) => {
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    "Falling back to default UUID completion",
-                );
+                debug_level.debug_print(EslDebugLevel::Debug6, || {
+                    "Falling back to default UUID completion".to_string()
+                });
             }
             Err(e) => {
                 tracing::warn!("UUID channel lookup failed, falling back: {:#}", e);
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    "Falling back to default UUID completion",
-                );
+                debug_level.debug_print(EslDebugLevel::Debug6, || {
+                    "Falling back to default UUID completion".to_string()
+                });
             }
         }
     }
@@ -72,27 +69,23 @@ pub async fn get_console_complete(
         .await
     {
         Ok(response) => {
-            debug_level.debug_print(
-                EslDebugLevel::Debug6,
-                &format!("ESL Response success: {}", response.is_success()),
-            );
+            debug_level.debug_print(EslDebugLevel::Debug6, || {
+                format!("ESL Response success: {}", response.is_success())
+            });
 
             if let Some(body) = response.body() {
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("ESL Response body (escaped): {:?}", body),
-                );
+                debug_level.debug_print(EslDebugLevel::Debug6, || {
+                    format!("ESL Response body (escaped): {:?}", body)
+                });
                 let parsed_completions = parse_console_complete_response(body);
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("Parsed completions: {:?}", parsed_completions),
-                );
+                debug_level.debug_print(EslDebugLevel::Debug6, || {
+                    format!("Parsed completions: {:?}", parsed_completions)
+                });
                 parsed_completions
             } else {
-                debug_level.debug_print(
-                    EslDebugLevel::Debug6,
-                    &format!("ESL Response: no body for command: {}", cmd),
-                );
+                debug_level.debug_print(EslDebugLevel::Debug6, || {
+                    format!("ESL Response: no body for command: {}", cmd)
+                });
                 Vec::new()
             }
         }

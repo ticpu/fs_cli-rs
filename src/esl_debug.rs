@@ -80,10 +80,10 @@ impl EslDebugLevel {
         }
     }
 
-    /// Debug print if level is high enough
-    pub fn debug_print(&self, level: EslDebugLevel, message: &str) {
+    /// Debug print if level is high enough; `msg` is only evaluated when enabled
+    pub fn debug_print(&self, level: EslDebugLevel, msg: impl FnOnce() -> String) {
         if *self >= level {
-            eprintln!("[ESL_DEBUG:{}] {}", level.as_str(), message);
+            eprintln!("[ESL_DEBUG:{}] {}", level.as_str(), msg());
         }
     }
 }
