@@ -14,6 +14,7 @@ use crate::{
     subscribe_heartbeat, subscribe_to_events,
 };
 use anyhow::Result;
+use colored::Colorize;
 use crossterm::{
     cursor::MoveTo,
     terminal::{Clear, ClearType},
@@ -273,7 +274,9 @@ fn format_channel_event(
 
     Some(match color_mode {
         crate::commands::ColorMode::Never => line,
-        _ => format!("\x1b[36m{}\x1b[0m", line),
+        _ => line
+            .cyan()
+            .to_string(),
     })
 }
 
