@@ -35,6 +35,8 @@ if command -v gitleaks &>/dev/null; then
         echo "gitleaks found secrets in staged changes."
         exit 1
     fi
+else
+    echo "WARNING: gitleaks not installed, skipping secrets scan" >&2
 fi
 
 echo "Pre-commit checks passed"

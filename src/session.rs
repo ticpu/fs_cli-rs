@@ -353,9 +353,14 @@ async fn run_command_loop(
                         }
                         "/clear" => {
                             let mut stdout = io::stdout();
-                            let _ = stdout.execute(Clear(ClearType::All));
-                            let _ = stdout.execute(MoveTo(0, 0));
-                            let _ = stdout.flush();
+                            let result: io::Result<()> = (|| {
+                                stdout.execute(Clear(ClearType::All))?;
+                                stdout.execute(MoveTo(0, 0))?;
+                                stdout.flush()
+                            })();
+                            if let Err(e) = result {
+                                warn!("Failed to clear terminal: {}", e);
+                            }
                             continue;
                         }
                         _ => {
