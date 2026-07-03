@@ -360,7 +360,7 @@ async fn run_command_loop(
                         }
                         _ => {
                             if let Some(end) = execute_with_disconnect_check(
-                                client, processor, &command, config,
+                                client, processor, &command,
                             ).await {
                                 return end;
                             }
@@ -379,7 +379,7 @@ async fn run_command_loop(
                     .unwrap_or(command);
 
                 if let Some(end) = execute_with_disconnect_check(
-                    client, processor, &effective, config,
+                    client, processor, &effective,
                 ).await {
                     return end;
                 }
@@ -404,18 +404,13 @@ async fn execute_with_disconnect_check(
     client: &EslClient,
     processor: &CommandProcessor,
     command: &str,
-    config: &AppConfig,
 ) -> Option<SessionEnd> {
     if let Err(e) = processor
         .execute_command(client, command)
         .await
     {
         if is_connection_error(&e) {
-            if config.reconnect {
-                return Some(SessionEnd::Disconnected(None));
-            }
-            error!("Connection to FreeSWITCH lost");
-            return Some(SessionEnd::Disconnected(None));
+            return Some(SessionEnd::Disconnected(Some(e.to_string())));
         }
         processor
             .handle_error(e)
