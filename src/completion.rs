@@ -29,6 +29,85 @@ fn add_trailing_space(candidates: &mut [Pair]) {
     }
 }
 
+const FS_COMMANDS: &[&str] = &[
+    // Basic commands
+    "status",
+    "version",
+    "uptime",
+    "help",
+    // Show commands
+    "show",
+    "show channels",
+    "show channels count",
+    "show calls",
+    "show registrations",
+    "show modules",
+    "show interfaces",
+    "show api",
+    "show application",
+    "show codec",
+    "show file",
+    "show timer",
+    "show tasks",
+    "show complete",
+    // Control commands
+    "reload",
+    "reloadxml",
+    "reload mod_sofia",
+    "reload mod_dialplan_xml",
+    "originate",
+    // Sofia commands
+    "sofia",
+    "sofia status",
+    "sofia profile",
+    "sofia profile internal",
+    "sofia profile external",
+    "sofia global",
+    // Channel commands
+    "uuid_answer",
+    "uuid_hangup",
+    "uuid_transfer",
+    "uuid_bridge",
+    "uuid_park",
+    "uuid_hold",
+    "uuid_break",
+    "uuid_kill",
+    // Conference commands
+    "conference",
+    "conference list",
+    "conference kick",
+    "conference mute",
+    "conference unmute",
+    // System commands
+    "fsctl",
+    "fsctl pause",
+    "fsctl resume",
+    "fsctl shutdown",
+    "fsctl crash",
+    "fsctl send_sighup",
+    "load",
+    "unload",
+    "bgapi",
+    // Log commands
+    "console",
+    "log",
+    "uuid_dump",
+    // Database commands
+    "db",
+    "group",
+    "user_exists",
+    // Other common commands
+    "hupall",
+    "pause",
+    "resume",
+    "shutdown",
+    "expr",
+    "eval",
+    "expand",
+    "global_getvar",
+    "global_setvar",
+];
+
 /// FreeSWITCH CLI completer with command suggestions
 pub struct FsCliCompleter {
     filename_completer: FilenameCompleter,
@@ -40,20 +119,7 @@ pub struct FsCliCompleter {
 }
 
 impl FsCliCompleter {
-    /// Create new completer
-    pub fn new() -> Self {
-        Self {
-            filename_completer: FilenameCompleter::new(),
-            history_hinter: HistoryHinter::new(),
-            bracket_highlighter: MatchingBracketHighlighter::new(),
-            bracket_validator: MatchingBracketValidator::new(),
-            completion_tx: None,
-            debug_level: EslDebugLevel::None,
-        }
-    }
-
-    /// Create new completer with completion channel for ESL-based completions
-    pub fn new_with_completion_channel(
+    pub fn new(
         completion_tx: mpsc::UnboundedSender<CompletionRequest>,
         debug_level: EslDebugLevel,
     ) -> Self {
@@ -67,96 +133,14 @@ impl FsCliCompleter {
         }
     }
 
-    /// Get FreeSWITCH command suggestions
-    fn get_fs_commands() -> Vec<&'static str> {
-        vec![
-            // Basic commands
-            "status",
-            "version",
-            "uptime",
-            "help",
-            // Show commands
-            "show",
-            "show channels",
-            "show channels count",
-            "show calls",
-            "show registrations",
-            "show modules",
-            "show interfaces",
-            "show api",
-            "show application",
-            "show codec",
-            "show file",
-            "show timer",
-            "show tasks",
-            "show complete",
-            // Control commands
-            "reload",
-            "reloadxml",
-            "reload mod_sofia",
-            "reload mod_dialplan_xml",
-            "originate",
-            // Sofia commands
-            "sofia",
-            "sofia status",
-            "sofia profile",
-            "sofia profile internal",
-            "sofia profile external",
-            "sofia global",
-            // Channel commands
-            "uuid_answer",
-            "uuid_hangup",
-            "uuid_transfer",
-            "uuid_bridge",
-            "uuid_park",
-            "uuid_hold",
-            "uuid_break",
-            "uuid_kill",
-            // Conference commands
-            "conference",
-            "conference list",
-            "conference kick",
-            "conference mute",
-            "conference unmute",
-            // System commands
-            "fsctl",
-            "fsctl pause",
-            "fsctl resume",
-            "fsctl shutdown",
-            "fsctl crash",
-            "fsctl send_sighup",
-            "load",
-            "unload",
-            "bgapi",
-            // Log commands
-            "console",
-            "log",
-            "uuid_dump",
-            // Database commands
-            "db",
-            "group",
-            "user_exists",
-            // Other common commands
-            "hupall",
-            "pause",
-            "resume",
-            "shutdown",
-            "expr",
-            "eval",
-            "expand",
-            "global_getvar",
-            "global_setvar",
-        ]
-    }
-
     /// Get command completions for a given input
     fn complete_command(&self, line: &str, pos: usize) -> rustyline::Result<(usize, Vec<Pair>)> {
-        let commands = Self::get_fs_commands();
         let (start, current_word) = extract_word(line, pos, None, |c| c == ' ');
 
         // Find matching commands
-        let matches: Vec<Pair> = commands
-            .into_iter()
+        let matches: Vec<Pair> = FS_COMMANDS
+            .iter()
+            .copied()
             .filter(|cmd| {
                 // For multi-word commands, check if they start with current line
                 if cmd.starts_with(&line[..start]) {
@@ -252,12 +236,6 @@ impl FsCliCompleter {
                 });
             Vec::new()
         }
-    }
-}
-
-impl Default for FsCliCompleter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

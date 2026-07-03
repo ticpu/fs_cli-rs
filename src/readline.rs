@@ -95,7 +95,7 @@ pub fn run_readline_loop(
         .build();
     let mut rl = Editor::<FsCliCompleter, FileHistory>::with_config(rl_config)?;
 
-    let completer = FsCliCompleter::new_with_completion_channel(completion_tx, config.debug);
+    let completer = FsCliCompleter::new(completion_tx, config.debug);
     rl.set_helper(Some(completer));
 
     let macros = build_macros(config);
