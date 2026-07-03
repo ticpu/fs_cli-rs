@@ -1,11 +1,9 @@
 //! Log display functionality for fs_cli-rs
 
 use crate::commands::ColorMode;
+use crate::printer::Printer;
 use colored::*;
 use freeswitch_esl_tokio::{EslEvent, EventHeader};
-use rustyline::ExternalPrinter;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Log display helper functions
 pub struct LogDisplay;
@@ -17,23 +15,20 @@ impl LogDisplay {
             .is_some_and(|ct| ct.eq_ignore_ascii_case("log/data"))
     }
 
-    /// Display a log event with appropriate formatting and colors using ExternalPrinter
-    pub async fn display_log_event(
-        event: &EslEvent,
-        color_mode: ColorMode,
-        printer: &Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
-    ) {
-        // Extract log level
+    /// Display a log event with appropriate formatting and colors.
+    pub fn display_log_event(event: &EslEvent, color_mode: ColorMode, printer: &Printer) {
         let log_level = event
             .header(EventHeader::LogLevel)
-            .and_then(|level| {
-                level
-                    .parse::<u32>()
+            .and_then(|raw| {
+                raw.parse::<u32>()
                     .ok()
+                    .or_else(|| {
+                        tracing::debug!("unparseable Log-Level {:?}, defaulting to 7", raw);
+                        None
+                    })
             })
             .unwrap_or(7);
 
-        // Get log message body
         let message = event
             .body()
             .unwrap_or("");
@@ -44,7 +39,6 @@ impl LogDisplay {
             return;
         }
 
-        // Format and display the log message
         let formatted_message = match color_mode {
             ColorMode::Never => message
                 .trim()
@@ -53,16 +47,7 @@ impl LogDisplay {
             ColorMode::Line => Self::format_colored_log_full_line(message.trim(), log_level),
         };
 
-        // Use ExternalPrinter if available, otherwise fallback to println!
-        if let Some(printer_arc) = printer {
-            if let Ok(mut p) = printer_arc.try_lock() {
-                let _ = p.print(formatted_message);
-            } else {
-                println!("{}", formatted_message);
-            }
-        } else {
-            println!("{}", formatted_message);
-        }
+        printer.print(formatted_message);
     }
 
     /// Apply color based on log level
@@ -71,22 +56,16 @@ impl LogDisplay {
             0 => text
                 .white()
                 .bold(), // CONSOLE
-            1 => text
+            1 | 2 => text
                 .red()
-                .bold(), // ALERT
-            2 => text
-                .red()
-                .bold(), // CRIT
+                .bold(), // ALERT / CRIT
             3 => text.red(),    // ERR
             4 => text.yellow(), // WARNING
             5 => text.cyan(),   // NOTICE
             6 => text.green(),  // INFO - green like real fs_cli
-            7 => text
-                .yellow()
-                .dimmed(), // DEBUG - dark yellow
             _ => text
                 .yellow()
-                .dimmed(), // DEBUG1-10
+                .dimmed(), // DEBUG and higher
         }
     }
 
@@ -110,8 +89,7 @@ impl LogDisplay {
 
     /// Format colored log message with entire line colorized
     fn format_colored_log_full_line(message: &str, log_level: u32) -> String {
-        let colored_message = Self::colorize_by_level(message, log_level);
-        format!("{}", colored_message)
+        Self::colorize_by_level(message, log_level).to_string()
     }
 }
 

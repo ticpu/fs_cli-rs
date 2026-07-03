@@ -2,16 +2,14 @@
 
 use crate::completion::FsCliCompleter;
 use crate::config::AppConfig;
+use crate::printer::Printer;
 use anyhow::Result;
 use gethostname::gethostname;
 use rustyline::history::FileHistory;
-use rustyline::{
-    Cmd, Editor, EventHandler, ExternalPrinter, KeyCode, KeyEvent, Modifiers, Movement,
-};
+use rustyline::{Cmd, Editor, EventHandler, KeyCode, KeyEvent, Modifiers, Movement};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
 
 /// Completion request from readline thread to main thread
@@ -86,7 +84,7 @@ fn setup_function_key_bindings(
 pub fn run_readline_loop(
     cmd_tx: mpsc::UnboundedSender<String>,
     quit_tx: oneshot::Sender<()>,
-    printer_tx: oneshot::Sender<Arc<Mutex<dyn ExternalPrinter + Send>>>,
+    printer_tx: oneshot::Sender<Printer>,
     completion_tx: mpsc::UnboundedSender<CompletionRequest>,
     config: &AppConfig,
 ) -> Result<()> {
@@ -103,8 +101,12 @@ pub fn run_readline_loop(
     setup_function_key_bindings(&mut rl, &macros)?;
 
     let printer = rl.create_external_printer()?;
-    let printer_arc = Arc::new(Mutex::new(printer));
-    let _ = printer_tx.send(printer_arc);
+    if printer_tx
+        .send(Printer::with_external(printer))
+        .is_err()
+    {
+        warn!("Session ended before printer was delivered");
+    }
 
     let history_file = config
         .history_file

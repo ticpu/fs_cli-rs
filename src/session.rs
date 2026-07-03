@@ -7,6 +7,7 @@ use crate::commands::CommandProcessor;
 use crate::config::AppConfig;
 use crate::console_complete::get_console_complete;
 use crate::log_display::LogDisplay;
+use crate::printer::Printer;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
 use crate::{
     connect_to_freeswitch, enable_logging, is_connection_error, is_permission_denied,
@@ -21,10 +22,8 @@ use crossterm::{
 use freeswitch_esl_tokio::{
     ConnectionStatus, EslClient, EslEventStream, EslEventType, HeaderLookup,
 };
-use rustyline::ExternalPrinter;
 use std::io::{self, Write};
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tracing::{error, info, warn};
@@ -72,7 +71,7 @@ pub async fn run_interactive_mode(
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
     let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
-    let (printer_tx, printer_rx) = oneshot::channel::<Arc<Mutex<dyn ExternalPrinter + Send>>>();
+    let (printer_tx, printer_rx) = oneshot::channel::<Printer>();
     let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
 
     setup_subscriptions(&client, config).await;
@@ -88,20 +87,20 @@ pub async fn run_interactive_mode(
         run_readline_loop(cmd_tx, quit_tx, printer_tx, completion_tx, &config_clone)
     });
 
-    let external_printer = match printer_rx.await {
-        Ok(printer) => Some(printer),
+    let printer = match printer_rx.await {
+        Ok(p) => p,
         Err(_) => {
             error!("Failed to receive external printer");
-            None
+            Printer::none()
         }
     };
-    processor.set_printer(external_printer.clone());
+    processor.set_printer(printer.clone());
 
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
 
     // Reconnection loop — each iteration is one connection session
     let session_result = loop {
-        let mut event_task = spawn_event_consumer(events, external_printer.clone(), config.color);
+        let mut event_task = spawn_event_consumer(events, printer.clone(), config.color);
 
         let result = run_command_loop(
             &client,
@@ -278,20 +277,10 @@ fn format_channel_event(
     })
 }
 
-fn print_to_printer(printer: &Option<Arc<Mutex<dyn ExternalPrinter + Send>>>, message: String) {
-    if let Some(printer_arc) = printer {
-        if let Ok(mut p) = printer_arc.try_lock() {
-            let _ = p.print(message);
-            return;
-        }
-    }
-    println!("{}", message);
-}
-
 /// Spawn a task that consumes events and displays log/channel messages
 fn spawn_event_consumer(
     mut events: EslEventStream,
-    printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
+    printer: Printer,
     color_mode: crate::commands::ColorMode,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -302,9 +291,9 @@ fn spawn_event_consumer(
             match result {
                 Ok(event) => {
                     if let Some(msg) = format_channel_event(&event, color_mode) {
-                        print_to_printer(&printer, msg);
+                        printer.print(msg);
                     } else if LogDisplay::is_log_event(&event) {
-                        LogDisplay::display_log_event(&event, color_mode, &printer).await;
+                        LogDisplay::display_log_event(&event, color_mode, &printer);
                     }
                 }
                 Err(e) => {
@@ -348,7 +337,7 @@ async fn run_command_loop(
                 if command.starts_with('/') {
                     match command.as_str() {
                         "/help" => {
-                            processor.show_help().await;
+                            processor.show_help();
                             continue;
                         }
                         "/clear" => {
@@ -375,7 +364,7 @@ async fn run_command_loop(
                 }
 
                 if command == "help" {
-                    processor.show_help().await;
+                    processor.show_help();
                     continue;
                 }
 
@@ -417,9 +406,7 @@ async fn execute_with_disconnect_check(
         if is_connection_error(&e) {
             return Some(SessionEnd::Disconnected(Some(e.to_string())));
         }
-        processor
-            .handle_error(e)
-            .await;
+        processor.handle_error(e);
     }
     None
 }

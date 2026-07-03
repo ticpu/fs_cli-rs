@@ -1,13 +1,11 @@
 //! Command processing and execution for fs_cli-rs
 
 use crate::esl_debug::EslDebugLevel;
+use crate::printer::Printer;
 use anyhow::{anyhow, Error, Result};
 use colored::*;
 use freeswitch_esl_tokio::{EslClient, EslError};
-use rustyline::ExternalPrinter;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Color mode for log display
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -106,7 +104,7 @@ impl LogLevel {
 pub struct CommandProcessor {
     color_mode: ColorMode,
     debug_level: EslDebugLevel,
-    printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
+    printer: Printer,
 }
 
 impl CommandProcessor {
@@ -115,7 +113,7 @@ impl CommandProcessor {
         Self {
             color_mode,
             debug_level,
-            printer: None,
+            printer: Printer::none(),
         }
     }
 
@@ -125,40 +123,22 @@ impl CommandProcessor {
     }
 
     /// Set external printer for coordinated output
-    pub fn set_printer(&mut self, printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>) {
+    pub fn set_printer(&mut self, printer: Printer) {
         self.printer = printer;
     }
 
-    /// Print message using external printer or fallback to println
-    async fn print_message(&self, message: &str) {
-        if let Some(printer_arc) = &self.printer {
-            if let Ok(mut p) = printer_arc.try_lock() {
-                let _ = p.print(message.to_string());
-            } else {
-                // Fallback if printer is locked
-                println!("{}", message);
-            }
-        } else {
-            println!("{}", message);
-        }
+    fn print_message(&self, message: &str) {
+        self.printer
+            .print(message.to_string());
     }
 
-    /// Print error message using external printer or fallback to eprintln
-    async fn print_error(&self, message: &str) {
-        if let Some(printer_arc) = &self.printer {
-            if let Ok(mut p) = printer_arc.try_lock() {
-                let _ = p.print(message.to_string());
-            } else {
-                // Fallback if printer is locked
-                eprintln!("{}", message);
-            }
-        } else {
-            eprintln!("{}", message);
-        }
+    fn print_error(&self, message: &str) {
+        self.printer
+            .print_err(message.to_string());
     }
 
     /// Handle command execution errors with proper formatting
-    pub async fn handle_error(&self, error: Error) {
+    pub fn handle_error(&self, error: Error) {
         let error_msg = if !self.no_color() {
             format!(
                 "{}: {}",
@@ -170,8 +150,7 @@ impl CommandProcessor {
         } else {
             format!("Error: {}", error)
         };
-        self.print_error(&error_msg)
-            .await;
+        self.print_error(&error_msg);
     }
 
     /// Call the FreeSWITCH API, check success, and return the response body.
@@ -207,8 +186,7 @@ impl CommandProcessor {
             .handle_special_command(client, command)
             .await?
         {
-            self.print_message(&result)
-                .await;
+            self.print_message(&result);
             return Ok(());
         }
 
@@ -221,8 +199,7 @@ impl CommandProcessor {
                     .trim()
                     .is_empty()
                 {
-                    self.print_message(&body)
-                        .await;
+                    self.print_message(&body);
                 }
             }
             Err(e)
@@ -243,8 +220,7 @@ impl CommandProcessor {
                 } else {
                     format!("API Error: {}", e)
                 };
-                self.print_error(&error_msg)
-                    .await;
+                self.print_error(&error_msg);
             }
         }
 
@@ -359,7 +335,7 @@ impl CommandProcessor {
     }
 
     /// Show help information
-    pub async fn show_help(&self) {
+    pub fn show_help(&self) {
         let help_text = r#"
 FreeSWITCH CLI Commands:
 
@@ -409,8 +385,7 @@ Use Tab for command completion and Up/Down arrows for history.
         } else {
             help_text.to_string()
         };
-        self.print_message(&formatted_help)
-            .await;
+        self.print_message(&formatted_help);
     }
 }
 
