@@ -1,6 +1,7 @@
 NAME := fs-cli
 BINARY := fs_cli
 DOCKER := $(shell which podman 2>/dev/null || which docker)
+$(if $(DOCKER),,$(error Neither podman nor docker found in PATH))
 CARGO_VERSION := $(shell grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
 VERSION := v$(CARGO_VERSION)
 GIT_DIRTY := $(shell git diff-index --quiet HEAD -- . 2>/dev/null || echo dirty)
@@ -43,7 +44,7 @@ $(DEB_ARM64): $(BINARY)-arm64 DEBIAN/control
 
 $(BINARY): Cargo.toml Cargo.lock src/*
 	$(DOCKER) build --pull-always --layers=false --tag "$(IMG)" -f Containerfile .
-	$(DOCKER) rm "$(NAME)-build" 2>/dev/null || true
+	$(DOCKER) rm "$(NAME)-build" 2>/dev/null || true  # pre-cleanup: ignore if no leftover container
 	$(DOCKER) create --name "$(NAME)-build" "$(IMG)"
 	$(DOCKER) cp "$(NAME)-build:/app/target/release/$(BINARY)" "$(BINARY)"
 	$(DOCKER) rm "$(NAME)-build"
@@ -51,7 +52,7 @@ $(BINARY): Cargo.toml Cargo.lock src/*
 
 $(BINARY)-amd64: Cargo.toml Cargo.lock src/*
 	$(DOCKER) build --pull-always --layers=false --tag "$(IMG)" -f Containerfile.debian .
-	$(DOCKER) rm "$(NAME)-build" 2>/dev/null || true
+	$(DOCKER) rm "$(NAME)-build" 2>/dev/null || true  # pre-cleanup: ignore if no leftover container
 	$(DOCKER) create --name "$(NAME)-build" "$(IMG)"
 	$(DOCKER) cp "$(NAME)-build:/app/target/release/$(BINARY)" "$@"
 	$(DOCKER) rm "$(NAME)-build"
@@ -59,7 +60,7 @@ $(BINARY)-amd64: Cargo.toml Cargo.lock src/*
 
 $(BINARY)-arm64: Cargo.toml Cargo.lock src/*
 	$(DOCKER) build --pull-always --layers=false --build-arg TARGET=aarch64-unknown-linux-gnu --tag "$(IMG)" -f Containerfile .
-	$(DOCKER) rm "$(NAME)-build" 2>/dev/null || true
+	$(DOCKER) rm "$(NAME)-build" 2>/dev/null || true  # pre-cleanup: ignore if no leftover container
 	$(DOCKER) create --name "$(NAME)-build" "$(IMG)"
 	$(DOCKER) cp "$(NAME)-build:/app/target/release/$(BINARY)" "$@"
 	$(DOCKER) rm "$(NAME)-build"

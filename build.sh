@@ -65,7 +65,7 @@ CONTAINER=$($CONTAINER_CMD create fs_cli-build)
 $CONTAINER_CMD cp $CONTAINER:/app/target/release/$SRC_BINARY $BINARY_NAME
 
 # Clean up
-$CONTAINER_CMD rm $CONTAINER > /dev/null 2>&1
-$CONTAINER_CMD rmi fs_cli-build -f > /dev/null 2>&1
+$CONTAINER_CMD rm $CONTAINER || echo "Warning: failed to remove container $CONTAINER" >&2
+$CONTAINER_CMD rmi fs_cli-build -f || echo "Warning: failed to remove image fs_cli-build, it may persist" >&2
 
 echo "Binary extracted to $BINARY_NAME"
