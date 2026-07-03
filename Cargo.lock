@@ -330,14 +330,15 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "freeswitch-esl-tokio"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56a15145bcab9206cc68b5da6247349ffa6468b3b07df7299e0188106a3ecb57"
+checksum = "9b2156ac2c2897f2e5965adb6b421fc062a29db9aea33696719e9bcd52eacd73"
 dependencies = [
  "bytes",
  "freeswitch-types",
  "futures-util",
  "indexmap",
+ "memchr",
  "percent-encoding",
  "quick-xml",
  "serde_json",
@@ -348,9 +349,9 @@ dependencies = [
 
 [[package]]
 name = "freeswitch-types"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87efa2e6c5fdf20e8374c78958c589fb9e2089800dd4a5064f184ee2a91f0034"
+checksum = "eac7ce0d118e4ffc7ec3eca1f9f3c1d4658f96fb34e9d0b379b0edc70d73dda7"
 dependencies = [
  "indexmap",
  "percent-encoding",
@@ -360,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "fs_cli-rs"
-version = "1.3.6"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -533,9 +534,9 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libredox"
-version = "0.1.17"
+version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f02ab6bace2054fb888a3c16f990117b579d14a3088e472d63c6011fa185c9d3"
+checksum = "c943259e342f1e06ff2da7a83eabdfe7f92ce10262688dbf1895ff0b3e6e4652"
 dependencies = [
  "libc",
 ]
@@ -930,9 +931,9 @@ dependencies = [
 
 [[package]]
 name = "sip-header"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3008e2fdb784022761db570807763bef5a0cb98076cecef50186cd10ced1ca8"
+checksum = "50a26231b332cb575524d8676c744e93450d37d84af37eeadc0e599ca8ffd086"
 dependencies = [
  "percent-encoding",
  "serde",
