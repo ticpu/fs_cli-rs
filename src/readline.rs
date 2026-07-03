@@ -6,7 +6,7 @@ use crate::console_complete::Completion;
 use crate::printer::Printer;
 use anyhow::Result;
 use gethostname::gethostname;
-use rustyline::history::FileHistory;
+use rustyline::history::{FileHistory, History};
 use rustyline::{Cmd, Editor, EventHandler, KeyCode, KeyEvent, Modifiers, Movement};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -115,10 +115,15 @@ pub fn run_readline_loop(
     let history_file = config
         .history_file
         .clone()
-        .unwrap_or_else(|| {
-            let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            path.push(".fs_cli_history");
-            path
+        .unwrap_or_else(|| match dirs::home_dir() {
+            Some(mut path) => {
+                path.push(".fs_cli_history");
+                path
+            }
+            None => {
+                warn!("HOME is unset, saving history in current directory");
+                PathBuf::from(".fs_cli_history")
+            }
         });
 
     if history_file.exists() {
@@ -127,18 +132,18 @@ pub fn run_readline_loop(
         }
     }
 
-    loop {
-        let prompt_host = if config.host == "localhost" {
-            gethostname()
-                .to_string_lossy()
-                .to_string()
-        } else {
-            config
-                .host
-                .clone()
-        };
-        let prompt = format!("freeswitch@{}> ", prompt_host);
+    let prompt_host = if config.host == "localhost" {
+        gethostname()
+            .to_string_lossy()
+            .to_string()
+    } else {
+        config
+            .host
+            .clone()
+    };
+    let prompt = format!("freeswitch@{}> ", prompt_host);
 
+    loop {
         let result = if let Some(stashed) = rl.take_stashed_line() {
             rl.readline_with_initial(&prompt, (&stashed, ""))
         } else {
@@ -152,7 +157,9 @@ pub fn run_readline_loop(
                     continue;
                 }
 
-                let _ = rl.add_history_entry(line);
+                if let Err(e) = rl.add_history_entry(line) {
+                    warn!("Could not add history entry: {}", e);
+                }
 
                 if matches!(line, "/quit" | "/exit" | "/bye") {
                     println!("Goodbye!");
@@ -163,13 +170,11 @@ pub fn run_readline_loop(
                 if line == "/history" {
                     println!("Command History:");
                     let history = rl.history();
+                    let len = history.len();
                     for (i, entry) in history
                         .iter()
                         .enumerate()
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .take(20)
+                        .skip(len.saturating_sub(20))
                     {
                         println!("  {}: {}", i + 1, entry);
                     }
