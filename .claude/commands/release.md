@@ -75,7 +75,20 @@ EOF
 git push --tags
 ```
 
-7. Report the tag and changelog.
+7. WAIT for the tag's Release workflow to publish the artifacts
+   (`gh run watch`) — the AUR update reads the latest GitHub release.
+
+8. Update the AUR package:
+
+```sh
+cd ~/.cache/paru/clone/fs_cli-rs/ && ./update-pkg.sh 2>&1 | grep -v Compiling
+git push
+```
+
+   The script should print the new version; troubleshoot only if it fails.
+   AUR commits get no Co-Authored-By trailer.
+
+9. Report the tag and changelog.
 
 ## Important
 
