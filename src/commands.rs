@@ -5,6 +5,7 @@ use crate::printer::Printer;
 use anyhow::{anyhow, Error, Result};
 use colored::*;
 use freeswitch_esl_tokio::{EslClient, EslError};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 /// Color mode for log display
@@ -331,9 +332,18 @@ impl CommandProcessor {
         "Uptime information not found".to_string()
     }
 
-    /// Show help information
-    pub fn show_help(&self) {
-        let help_text = r#"
+    /// Show help information with the effective (merged) function key bindings.
+    pub fn show_help(&self, macros: &HashMap<String, String>) {
+        let mut fnkey_lines = String::new();
+        for i in 1u8..=12 {
+            let key = format!("f{}", i);
+            if let Some(cmd) = macros.get(&key) {
+                fnkey_lines.push_str(&format!("  F{:<3} = {}\n", i, cmd));
+            }
+        }
+
+        let help_text = format!(
+            r#"
 FreeSWITCH CLI Commands:
 
 Basic Commands:
@@ -354,13 +364,7 @@ Control Commands:
   originate <url> <dest>    - Originate a call
 
 Function Key Shortcuts (customizable in config):
-  F1  = help                F7  = /log console
-  F2  = status              F8  = /log debug
-  F3  = show channels       F9  = sofia status profile internal
-  F4  = show calls          F10 = fsctl pause
-  F5  = sofia status        F11 = fsctl resume
-  F6  = reloadxml           F12 = version
-
+{}
 Built-in Commands:
   /help                     - Show this help
   /quit, /exit, /bye        - Exit the CLI
@@ -375,12 +379,14 @@ Configuration:
 
 You can execute any FreeSWITCH API command directly.
 Use Tab for command completion and Up/Down arrows for history.
-"#;
+"#,
+            fnkey_lines
+        );
 
         let formatted_help = if !self.no_color() {
             format!("{}", help_text.cyan())
         } else {
-            help_text.to_string()
+            help_text
         };
         self.print_message(&formatted_help);
     }

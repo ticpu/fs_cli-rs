@@ -85,25 +85,11 @@ impl Default for ProfileConfig {
 }
 
 impl ProfileConfig {
-    /// Get default macros
     fn default_macros() -> HashMap<String, String> {
-        let mut macros = HashMap::new();
-        macros.insert("f1".to_string(), "help".to_string());
-        macros.insert("f2".to_string(), "status".to_string());
-        macros.insert("f3".to_string(), "show channels".to_string());
-        macros.insert("f4".to_string(), "show calls".to_string());
-        macros.insert("f5".to_string(), "sofia status".to_string());
-        macros.insert("f6".to_string(), "reloadxml".to_string());
-        macros.insert("f7".to_string(), "/log console".to_string());
-        macros.insert("f8".to_string(), "/log debug".to_string());
-        macros.insert(
-            "f9".to_string(),
-            "sofia status profile internal".to_string(),
-        );
-        macros.insert("f10".to_string(), "fsctl pause".to_string());
-        macros.insert("f11".to_string(), "fsctl resume".to_string());
-        macros.insert("f12".to_string(), "version".to_string());
-        macros
+        crate::readline::DEFAULT_FNKEYS
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 }
 

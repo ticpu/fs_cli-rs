@@ -21,25 +21,28 @@ pub struct CompletionRequest {
     pub response_tx: std::sync::mpsc::SyncSender<Vec<Completion>>,
 }
 
+/// Default F1-F12 macro bindings in key-sorted order.
+pub const DEFAULT_FNKEYS: [(&str, &str); 12] = [
+    ("f1", "help"),
+    ("f2", "status"),
+    ("f3", "show channels"),
+    ("f4", "show calls"),
+    ("f5", "sofia status"),
+    ("f6", "reloadxml"),
+    ("f7", "/log console"),
+    ("f8", "/log debug"),
+    ("f9", "sofia status profile internal"),
+    ("f10", "fsctl pause"),
+    ("f11", "fsctl resume"),
+    ("f12", "version"),
+];
+
 /// Default FreeSWITCH function key bindings
 pub fn get_default_fnkeys() -> HashMap<String, String> {
-    let mut macros = HashMap::new();
-    macros.insert("f1".to_string(), "help".to_string());
-    macros.insert("f2".to_string(), "status".to_string());
-    macros.insert("f3".to_string(), "show channels".to_string());
-    macros.insert("f4".to_string(), "show calls".to_string());
-    macros.insert("f5".to_string(), "sofia status".to_string());
-    macros.insert("f6".to_string(), "reloadxml".to_string());
-    macros.insert("f7".to_string(), "/log console".to_string());
-    macros.insert("f8".to_string(), "/log debug".to_string());
-    macros.insert(
-        "f9".to_string(),
-        "sofia status profile internal".to_string(),
-    );
-    macros.insert("f10".to_string(), "fsctl pause".to_string());
-    macros.insert("f11".to_string(), "fsctl resume".to_string());
-    macros.insert("f12".to_string(), "version".to_string());
-    macros
+    DEFAULT_FNKEYS
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 /// Parse function key shortcuts (F1-F12) with custom macros

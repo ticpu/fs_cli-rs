@@ -340,7 +340,7 @@ async fn run_command_loop(
                 if command.starts_with('/') {
                     match command.as_str() {
                         "/help" => {
-                            processor.show_help();
+                            processor.show_help(macros);
                             continue;
                         }
                         "/clear" => {
@@ -367,7 +367,7 @@ async fn run_command_loop(
                 }
 
                 if command == "help" {
-                    processor.show_help();
+                    processor.show_help(macros);
                     continue;
                 }
 
