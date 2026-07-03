@@ -47,110 +47,46 @@ impl std::fmt::Display for ColorMode {
 }
 
 /// FreeSWITCH log levels
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, strum::EnumString, strum::IntoStaticStr, strum::EnumIter,
+)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+#[repr(u8)]
 pub enum LogLevel {
-    Console,
-    Alert,
-    Crit,
-    Err,
-    Warning,
-    Notice,
-    Info,
-    Debug,
-    Debug1,
-    Debug2,
-    Debug3,
-    Debug4,
-    Debug5,
-    Debug6,
-    Debug7,
-    Debug8,
-    Debug9,
-    Debug10,
-    NoLog,
-}
-
-impl FromStr for LogLevel {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, String> {
-        match s
-            .to_lowercase()
-            .as_str()
-        {
-            "console" => Ok(LogLevel::Console),
-            "alert" => Ok(LogLevel::Alert),
-            "crit" => Ok(LogLevel::Crit),
-            "err" | "error" => Ok(LogLevel::Err),
-            "warning" | "warn" => Ok(LogLevel::Warning),
-            "notice" => Ok(LogLevel::Notice),
-            "info" => Ok(LogLevel::Info),
-            "debug" => Ok(LogLevel::Debug),
-            "debug1" => Ok(LogLevel::Debug1),
-            "debug2" => Ok(LogLevel::Debug2),
-            "debug3" => Ok(LogLevel::Debug3),
-            "debug4" => Ok(LogLevel::Debug4),
-            "debug5" => Ok(LogLevel::Debug5),
-            "debug6" => Ok(LogLevel::Debug6),
-            "debug7" => Ok(LogLevel::Debug7),
-            "debug8" => Ok(LogLevel::Debug8),
-            "debug9" => Ok(LogLevel::Debug9),
-            "debug10" => Ok(LogLevel::Debug10),
-            "nolog" => Ok(LogLevel::NoLog),
-            _ => Err(format!("Invalid log level: {}", s)),
-        }
-    }
+    Console = 0,
+    Alert = 1,
+    Crit = 2,
+    #[strum(serialize = "error")]
+    Err = 3,
+    #[strum(serialize = "warn")]
+    Warning = 4,
+    Notice = 5,
+    Info = 6,
+    Debug = 7,
+    Debug1 = 8,
+    Debug2 = 9,
+    Debug3 = 10,
+    Debug4 = 11,
+    Debug5 = 12,
+    Debug6 = 13,
+    Debug7 = 14,
+    Debug8 = 15,
+    Debug9 = 16,
+    Debug10 = 17,
+    NoLog = 18,
 }
 
 impl LogLevel {
     /// Convert log level to the level string for FreeSWITCH command
     pub fn as_str(&self) -> &'static str {
-        match self {
-            LogLevel::Console => "console",
-            LogLevel::Alert => "alert",
-            LogLevel::Crit => "crit",
-            LogLevel::Err => "err",
-            LogLevel::Warning => "warning",
-            LogLevel::Notice => "notice",
-            LogLevel::Info => "info",
-            LogLevel::Debug => "debug",
-            LogLevel::Debug1 => "debug1",
-            LogLevel::Debug2 => "debug2",
-            LogLevel::Debug3 => "debug3",
-            LogLevel::Debug4 => "debug4",
-            LogLevel::Debug5 => "debug5",
-            LogLevel::Debug6 => "debug6",
-            LogLevel::Debug7 => "debug7",
-            LogLevel::Debug8 => "debug8",
-            LogLevel::Debug9 => "debug9",
-            LogLevel::Debug10 => "debug10",
-            LogLevel::NoLog => "nolog",
-        }
+        self.into()
     }
 
     /// Get all available log levels for help text
     pub fn all_variants() -> &'static [LogLevel] {
-        &[
-            LogLevel::Console,
-            LogLevel::Alert,
-            LogLevel::Crit,
-            LogLevel::Err,
-            LogLevel::Warning,
-            LogLevel::Notice,
-            LogLevel::Info,
-            LogLevel::Debug,
-            LogLevel::Debug1,
-            LogLevel::Debug2,
-            LogLevel::Debug3,
-            LogLevel::Debug4,
-            LogLevel::Debug5,
-            LogLevel::Debug6,
-            LogLevel::Debug7,
-            LogLevel::Debug8,
-            LogLevel::Debug9,
-            LogLevel::Debug10,
-            LogLevel::NoLog,
-        ]
+        use strum::IntoEnumIterator;
+        static VARIANTS: std::sync::OnceLock<Vec<LogLevel>> = std::sync::OnceLock::new();
+        VARIANTS.get_or_init(|| LogLevel::iter().collect())
     }
 
     /// Get help text with all available levels
@@ -377,7 +313,9 @@ impl CommandProcessor {
 
         let log_level = match parts[0].parse::<LogLevel>() {
             Ok(level) => level,
-            Err(err) => return Ok(Some(err)),
+            Err(_) => {
+                return Ok(Some(format!("Invalid log level: {}", parts[0])));
+            }
         };
 
         let response = if log_level == LogLevel::NoLog {
@@ -501,5 +439,24 @@ mod tests {
     fn log_level_parse_case_insensitive() {
         let result: Result<LogLevel, _> = "DEBUG".parse();
         assert_eq!(result.unwrap(), LogLevel::Debug);
+    }
+
+    #[test]
+    fn log_level_parse_aliases() {
+        let err: Result<LogLevel, _> = "error".parse();
+        assert_eq!(err.unwrap(), LogLevel::Err);
+        let warn: Result<LogLevel, _> = "warn".parse();
+        assert_eq!(warn.unwrap(), LogLevel::Warning);
+    }
+
+    #[test]
+    fn log_level_as_u8_discriminants() {
+        assert_eq!(LogLevel::Console as u8, 0);
+        assert_eq!(LogLevel::Alert as u8, 1);
+        assert_eq!(LogLevel::Crit as u8, 2);
+        assert_eq!(LogLevel::Err as u8, 3);
+        assert_eq!(LogLevel::Warning as u8, 4);
+        assert_eq!(LogLevel::Debug as u8, 7);
+        assert_eq!(LogLevel::NoLog as u8, 18);
     }
 }
