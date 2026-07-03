@@ -3,7 +3,9 @@
 use crate::console_complete::Completion;
 use crate::esl_debug::EslDebugLevel;
 use crate::readline::CompletionRequest;
-use rustyline::completion::{Completer, FilenameCompleter, Pair};
+use rustyline::completion::{
+    extract_word, longest_common_prefix, Completer, FilenameCompleter, Pair,
+};
 use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
@@ -12,41 +14,19 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Find the longest common prefix among a list of strings
-fn find_common_prefix(strings: &[&str]) -> String {
-    if strings.is_empty() {
-        return String::new();
-    }
-
-    if strings.len() == 1 {
-        return strings[0].to_string();
-    }
-
-    let first = strings[0];
-    let mut prefix_len = 0;
-
-    for (i, ch) in first
-        .chars()
-        .enumerate()
-    {
-        if strings
-            .iter()
-            .all(|s| {
-                s.chars()
-                    .nth(i)
-                    == Some(ch)
-            })
+/// Add a trailing space to the single candidate's replacement if not already present.
+/// No-op when the slice is empty or has more than one element.
+fn add_trailing_space(candidates: &mut [Pair]) {
+    if let [candidate] = candidates {
+        if !candidate
+            .replacement
+            .ends_with(' ')
         {
-            prefix_len = i + 1;
-        } else {
-            break;
+            candidate
+                .replacement
+                .push(' ');
         }
     }
-
-    first
-        .chars()
-        .take(prefix_len)
-        .collect()
 }
 
 /// FreeSWITCH CLI completer with command suggestions
@@ -172,17 +152,7 @@ impl FsCliCompleter {
     /// Get command completions for a given input
     fn complete_command(&self, line: &str, pos: usize) -> rustyline::Result<(usize, Vec<Pair>)> {
         let commands = Self::get_fs_commands();
-
-        // Find the current word being completed
-        let line_bytes = line.as_bytes();
-        let mut start = pos;
-
-        // Find start of current word (go back to last space or start)
-        while start > 0 && line_bytes[start - 1] != b' ' {
-            start -= 1;
-        }
-
-        let current_word = &line[start..pos];
+        let (start, current_word) = extract_word(line, pos, None, |c| c == ' ');
 
         // Find matching commands
         let matches: Vec<Pair> = commands
@@ -311,16 +281,8 @@ impl Completer for FsCliCompleter {
             let esl_completions = self.get_esl_completions(line, pos);
 
             if !esl_completions.is_empty() {
-                // Convert ESL completions to Pair format
                 let mut candidates = Vec::new();
-
-                // Find the current word being completed
-                let line_bytes = line.as_bytes();
-                let mut start = pos;
-                while start > 0 && line_bytes[start - 1] != b' ' {
-                    start -= 1;
-                }
-                let current_word = &line[start..pos];
+                let (start, current_word) = extract_word(line, pos, None, |c| c == ' ');
 
                 for completion in esl_completions {
                     match completion {
@@ -349,33 +311,19 @@ impl Completer for FsCliCompleter {
                     }
                 }
 
-                // Handle single vs multiple candidates differently
                 if candidates.len() == 1 {
-                    // Single candidate - add trailing space like C readline
-                    let candidate = &mut candidates[0];
-                    if !candidate
-                        .replacement
-                        .ends_with(' ')
-                    {
-                        candidate
-                            .replacement
-                            .push(' ');
-                    }
+                    add_trailing_space(&mut candidates);
                 } else if candidates.len() > 1 {
-                    // Multiple candidates - need to calculate common prefix and adjust replacements
-                    let completions: Vec<&str> = candidates
-                        .iter()
-                        .map(|c| {
-                            c.display
-                                .as_str()
-                        })
-                        .collect();
-                    let common_prefix = find_common_prefix(&completions);
-
-                    if common_prefix.len() > current_word.len() {
-                        // There's a common prefix beyond what user typed - complete to it
-                        for candidate in &mut candidates {
-                            candidate.replacement = common_prefix.clone();
+                    // Compute LCP of replacement values; if it extends beyond what the
+                    // user already typed, complete to it so multiple matches narrow down.
+                    // rustyline's longest_common_prefix uses replacement(), not display(),
+                    // giving a cleaner boundary on UUID completions.
+                    let lcp = longest_common_prefix(&candidates).map(|s| s.to_string());
+                    if let Some(lcp) = lcp {
+                        if lcp.len() > current_word.len() {
+                            for candidate in &mut candidates {
+                                candidate.replacement = lcp.clone();
+                            }
                         }
                     }
                 }
@@ -388,19 +336,7 @@ impl Completer for FsCliCompleter {
 
         // Fallback to static command completion
         let (start, mut candidates) = self.complete_command(line, pos)?;
-
-        // Add trailing space for single static completions
-        if candidates.len() == 1 {
-            let candidate = &mut candidates[0];
-            if !candidate
-                .replacement
-                .ends_with(' ')
-            {
-                candidate
-                    .replacement
-                    .push(' ');
-            }
-        }
+        add_trailing_space(&mut candidates);
 
         // If no command matches and we're completing a path-like string, try filename completion
         if candidates.is_empty() && (line.contains('/') || line.contains('\\')) {
