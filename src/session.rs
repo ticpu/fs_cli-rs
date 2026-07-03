@@ -6,7 +6,7 @@ use crate::channel_info::ChannelProvider;
 use crate::commands::CommandProcessor;
 use crate::config::AppConfig;
 use crate::console_complete::get_console_complete;
-use crate::log_display::LogDisplay;
+use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::Printer;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
 use crate::{
@@ -295,8 +295,8 @@ fn spawn_event_consumer(
                 Ok(event) => {
                     if let Some(msg) = format_channel_event(&event, color_mode) {
                         printer.print(msg);
-                    } else if LogDisplay::is_log_event(&event) {
-                        LogDisplay::display_log_event(&event, color_mode, &printer);
+                    } else if is_log_event(&event) {
+                        display_log_event(&event, color_mode, &printer);
                     }
                 }
                 Err(e) => {
