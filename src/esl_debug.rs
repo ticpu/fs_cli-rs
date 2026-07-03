@@ -5,7 +5,6 @@
 
 use std::fmt;
 use std::str::FromStr;
-use std::sync::OnceLock;
 
 /// ESL client-side debug levels (0-7)
 /// Matches the original fs_cli esl_global_set_default_logger levels
@@ -26,17 +25,10 @@ impl FromStr for EslDebugLevel {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "0" => Ok(EslDebugLevel::None),
-            "1" => Ok(EslDebugLevel::Error),
-            "2" => Ok(EslDebugLevel::Warning),
-            "3" => Ok(EslDebugLevel::Info),
-            "4" => Ok(EslDebugLevel::Debug),
-            "5" => Ok(EslDebugLevel::Debug5),
-            "6" => Ok(EslDebugLevel::Debug6),
-            "7" => Ok(EslDebugLevel::Debug7),
-            _ => Err(format!("Invalid ESL debug level: {} (must be 0-7)", s)),
-        }
+        let v: u8 = s
+            .parse()
+            .map_err(|_| format!("Invalid ESL debug level: {} (must be 0-7)", s))?;
+        Self::from_u8(v).map_err(|e| e.to_string())
     }
 }
 
@@ -100,14 +92,4 @@ impl fmt::Display for EslDebugLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
-}
-
-/// Global debug level instance
-static GLOBAL_DEBUG_LEVEL: OnceLock<EslDebugLevel> = OnceLock::new();
-
-/// Initialize the global debug level (should be called once at startup)
-pub fn init_global_debug_level(level: EslDebugLevel) {
-    GLOBAL_DEBUG_LEVEL
-        .set(level)
-        .ok();
 }

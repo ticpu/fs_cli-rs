@@ -25,8 +25,7 @@ use esl_debug::EslDebugLevel;
 async fn main() -> Result<()> {
     let config = Args::parse_and_merge()?;
 
-    crate::esl_debug::init_global_debug_level(config.debug);
-    setup_logging(config.debug)?;
+    setup_logging(config.debug);
 
     config
         .debug
@@ -63,7 +62,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn setup_logging(debug_level: EslDebugLevel) -> Result<()> {
+fn setup_logging(debug_level: EslDebugLevel) {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(debug_level.tracing_filter())
@@ -72,14 +71,13 @@ fn setup_logging(debug_level: EslDebugLevel) -> Result<()> {
         .with_file(false)
         .with_line_number(false)
         .init();
-    Ok(())
 }
 
 /// Connect to FreeSWITCH with timeout
 pub async fn connect_to_freeswitch(config: &AppConfig) -> Result<(EslClient, EslEventStream)> {
     info!(
-        "Connecting to FreeSWITCH at {}:{}",
-        config.host, config.port
+        "Connecting to FreeSWITCH at {}",
+        format_host_port(&config.host, config.port)
     );
 
     let result = if let Some(ref user) = config.user {
@@ -209,64 +207,50 @@ async fn execute_commands(
     Ok(())
 }
 
+fn format_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{}]:{}", host, port)
+    } else {
+        format!("{}:{}", host, port)
+    }
+}
+
+fn print_io_hint(io_err: &std::io::Error, config: &AppConfig) {
+    match io_err.kind() {
+        std::io::ErrorKind::ConnectionRefused => {
+            eprintln!(
+                "Connection refused - is FreeSWITCH running and listening on port {}?",
+                config.port
+            );
+        }
+        std::io::ErrorKind::TimedOut => {
+            eprintln!("Connection timed out after {} ms", config.timeout);
+        }
+        _ => {
+            eprintln!("IO error: {}", io_err);
+        }
+    }
+}
+
 fn print_connect_error(e: &anyhow::Error, config: &AppConfig) {
+    if let Some(EslError::AuthenticationFailed { reason }) = e.downcast_ref::<EslError>() {
+        eprintln!("Authentication failed: {}", reason);
+        return;
+    }
+
+    eprintln!(
+        "Failed to connect to FreeSWITCH at {}",
+        format_host_port(&config.host, config.port)
+    );
+
     if let Some(esl_err) = e.downcast_ref::<EslError>() {
         match esl_err {
-            EslError::AuthenticationFailed { reason } => {
-                eprintln!("Authentication failed: {}", reason);
-            }
-            EslError::Io(io_err) => {
-                eprintln!(
-                    "Failed to connect to FreeSWITCH at {}:{}",
-                    config.host, config.port
-                );
-                match io_err.kind() {
-                    std::io::ErrorKind::ConnectionRefused => {
-                        eprintln!(
-                            "Connection refused - is FreeSWITCH running and listening on port {}?",
-                            config.port
-                        );
-                    }
-                    std::io::ErrorKind::TimedOut => {
-                        eprintln!("Connection timed out after {} ms", config.timeout);
-                    }
-                    _ => {
-                        eprintln!("IO error: {}", io_err);
-                    }
-                }
-            }
-            _ => {
-                eprintln!(
-                    "Failed to connect to FreeSWITCH at {}:{}",
-                    config.host, config.port
-                );
-                eprintln!("Error: {}", esl_err);
-            }
+            EslError::Io(io_err) => print_io_hint(io_err, config),
+            _ => eprintln!("Error: {}", esl_err),
         }
     } else if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-        eprintln!(
-            "Failed to connect to FreeSWITCH at {}:{}",
-            config.host, config.port
-        );
-        match io_err.kind() {
-            std::io::ErrorKind::ConnectionRefused => {
-                eprintln!(
-                    "Connection refused - is FreeSWITCH running and listening on port {}?",
-                    config.port
-                );
-            }
-            std::io::ErrorKind::TimedOut => {
-                eprintln!("Connection timed out after {} ms", config.timeout);
-            }
-            _ => {
-                eprintln!("IO error: {}", io_err);
-            }
-        }
+        print_io_hint(io_err, config);
     } else {
-        eprintln!(
-            "Failed to connect to FreeSWITCH at {}:{}",
-            config.host, config.port
-        );
         eprintln!("Error: {}", e);
     }
 }
