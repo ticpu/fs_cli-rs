@@ -145,10 +145,7 @@ impl Args {
         if let Some(debug) = self.debug {
             config.debug = EslDebugLevel::from_u8(debug)?;
         }
-        if let Some(color) = self
-            .color
-            .clone()
-        {
+        if let Some(color) = self.color {
             config.color = color;
         }
         if let Some(history_file) = &self.history_file {
@@ -166,10 +163,7 @@ impl Args {
         if let Some(events) = self.events {
             config.events = events;
         }
-        if let Some(log_level) = self
-            .log_level
-            .clone()
-        {
+        if let Some(log_level) = self.log_level {
             config.log_level = log_level;
         }
         if let Some(quiet) = self.quiet {
