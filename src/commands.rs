@@ -101,6 +101,32 @@ impl LogLevel {
     }
 }
 
+/// Send a log-level command to FreeSWITCH.
+///
+/// Returns `Ok(None)` on server success, `Ok(Some(reply))` when the server
+/// rejects the request, `Err` on transport failure.
+pub async fn set_log_level(client: &EslClient, level: LogLevel) -> Result<Option<String>> {
+    let response = if level == LogLevel::NoLog {
+        client
+            .nolog()
+            .await?
+    } else {
+        client
+            .log(level.as_str())
+            .await?
+    };
+    if response.is_success() {
+        Ok(None)
+    } else {
+        Ok(Some(
+            response
+                .reply_text()
+                .unwrap_or("Unknown error")
+                .to_string(),
+        ))
+    }
+}
+
 /// Command processor for FreeSWITCH CLI commands
 pub struct CommandProcessor {
     color_mode: ColorMode,
@@ -292,29 +318,13 @@ impl CommandProcessor {
             }
         };
 
-        let response = if log_level == LogLevel::NoLog {
-            client
-                .nolog()
-                .await?
-        } else {
-            client
-                .log(log_level.as_str())
-                .await?
-        };
-
-        if response.is_success() {
-            Ok(Some(format!(
+        match set_log_level(client, log_level).await? {
+            None => Ok(Some(format!(
                 "+OK log level {} [{}]",
                 log_level.as_str(),
                 log_level as u8
-            )))
-        } else {
-            Ok(Some(format!(
-                "Failed to set log level: {}",
-                response
-                    .reply_text()
-                    .unwrap_or("Unknown error")
-            )))
+            ))),
+            Some(reply) => Ok(Some(format!("Failed to set log level: {}", reply))),
         }
     }
 

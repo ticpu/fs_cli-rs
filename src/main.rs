@@ -183,20 +183,8 @@ pub async fn enable_logging(
     log_level: crate::commands::LogLevel,
 ) -> Result<()> {
     info!("Enabling logging at level: {}", log_level.as_str());
-
-    let response = if log_level == crate::commands::LogLevel::NoLog {
-        client
-            .nolog()
-            .await?
-    } else {
-        client
-            .log(log_level.as_str())
-            .await?
-    };
-    if !response.is_success() {
-        if let Some(reply) = response.reply_text() {
-            warn!("Failed to set log level: {}", reply);
-        }
+    if let Some(reply) = crate::commands::set_log_level(client, log_level).await? {
+        warn!("Failed to set log level: {}", reply);
     }
     Ok(())
 }
