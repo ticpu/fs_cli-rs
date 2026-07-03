@@ -158,7 +158,7 @@ pub async fn subscribe_to_events(client: &EslClient) -> Result<()> {
             ],
         )
         .await?;
-    println!("Event monitoring enabled");
+    info!("Event monitoring enabled");
     Ok(())
 }
 
