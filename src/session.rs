@@ -330,7 +330,12 @@ async fn run_command_loop(
 ) -> SessionEnd {
     loop {
         tokio::select! {
-            _ = &mut *event_task => {
+            result = &mut *event_task => {
+                match result {
+                    Err(ref e) if e.is_panic() => error!("Event consumer task panicked: {}", e),
+                    Err(ref e) => error!("Event consumer task exited unexpectedly: {}", e),
+                    Ok(()) => {}
+                }
                 return match client.status() {
                     ConnectionStatus::Disconnected(r) => {
                         SessionEnd::Disconnected(Some(r.to_string()))
