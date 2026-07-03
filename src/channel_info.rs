@@ -1,6 +1,6 @@
 //! Channel information management for enhanced UUID completion
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use freeswitch_esl_tokio::EslClient;
 use serde::{Deserialize, Serialize};
 
@@ -76,59 +76,58 @@ impl ChannelProvider {
         Ok(Some(completions))
     }
 
-    /// Get channel count using "show channels count as json"
-    async fn get_channel_count(&self, client: &EslClient) -> Result<u32> {
+    async fn fetch_channels_json(
+        &self,
+        client: &EslClient,
+        command: &str,
+    ) -> Result<ChannelsResponse> {
         let response = client
-            .api("show channels count as json")
-            .await?;
+            .api(command)
+            .await
+            .with_context(|| format!("ESL API call '{}' failed", command))?;
 
         if !response.is_success() {
-            return Ok(0);
+            anyhow::bail!(
+                "ESL command '{}' returned: {}",
+                command,
+                response
+                    .body()
+                    .unwrap_or("-ERR")
+            );
         }
 
         let body = response
             .body()
             .unwrap_or_default();
-        match serde_json::from_str::<ChannelsResponse>(body) {
-            Ok(channels_response) => Ok(channels_response.row_count),
-            Err(_) => Ok(0), // Parse error, assume no channels
-        }
+        serde_json::from_str::<ChannelsResponse>(body)
+            .with_context(|| format!("Failed to parse JSON response for '{}'", command))
+    }
+
+    /// Get channel count using "show channels count as json"
+    async fn get_channel_count(&self, client: &EslClient) -> Result<u32> {
+        let resp = self
+            .fetch_channels_json(client, "show channels count as json")
+            .await?;
+        Ok(resp.row_count)
     }
 
     /// Get channel details using "show channels as json"
     async fn get_channels(&self, client: &EslClient) -> Result<Vec<ChannelInfo>> {
-        let response = client
-            .api("show channels as json")
+        let resp = self
+            .fetch_channels_json(client, "show channels as json")
             .await?;
-
-        if !response.is_success() {
-            return Ok(Vec::new());
-        }
-
-        let body = response
-            .body()
-            .unwrap_or_default();
-        match serde_json::from_str::<ChannelsResponse>(body) {
-            Ok(channels_response) => {
-                let mut channels = channels_response.rows;
-                // Sort by created_epoch (newest first)
-                channels.sort_by(|a, b| {
-                    let a_epoch: u64 = a
-                        .created_epoch
-                        .parse()
-                        .unwrap_or(0);
-                    let b_epoch: u64 = b
-                        .created_epoch
-                        .parse()
-                        .unwrap_or(0);
-                    b_epoch.cmp(&a_epoch)
-                });
-                Ok(channels)
-            }
-            Err(e) => {
-                tracing::debug!("Failed to parse channels JSON: {}", e);
-                Ok(Vec::new())
-            }
-        }
+        let mut channels = resp.rows;
+        channels.sort_by(|a, b| {
+            let a_epoch: u64 = a
+                .created_epoch
+                .parse()
+                .unwrap_or(0);
+            let b_epoch: u64 = b
+                .created_epoch
+                .parse()
+                .unwrap_or(0);
+            b_epoch.cmp(&a_epoch)
+        });
+        Ok(channels)
     }
 }

@@ -26,23 +26,34 @@ pub async fn get_console_complete(
     debug_level.debug_print(EslDebugLevel::Debug6, &format!("ESL API: {}", cmd));
 
     if is_uuid_command {
-        if let Ok(Some(enhanced_completions)) = channel_provider
+        match channel_provider
             .get_uuid_completions(client)
             .await
         {
-            debug_level.debug_print(
-                EslDebugLevel::Debug6,
-                &format!(
-                    "Using enhanced UUID completion with {} channels",
-                    enhanced_completions.len()
-                ),
-            );
-            return enhanced_completions;
+            Ok(Some(enhanced_completions)) => {
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    &format!(
+                        "Using enhanced UUID completion with {} channels",
+                        enhanced_completions.len()
+                    ),
+                );
+                return enhanced_completions;
+            }
+            Ok(None) => {
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    "Falling back to default UUID completion",
+                );
+            }
+            Err(e) => {
+                tracing::warn!("UUID channel lookup failed, falling back: {:#}", e);
+                debug_level.debug_print(
+                    EslDebugLevel::Debug6,
+                    "Falling back to default UUID completion",
+                );
+            }
         }
-        debug_level.debug_print(
-            EslDebugLevel::Debug6,
-            "Falling back to default UUID completion",
-        );
     }
 
     match client
