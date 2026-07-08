@@ -6,6 +6,7 @@ use crate::channel_info::ChannelProvider;
 use crate::commands::CommandProcessor;
 use crate::config::AppConfig;
 use crate::console_complete::get_console_complete;
+use crate::esl_debug::EslDebugLevel;
 use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::Printer;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
@@ -28,7 +29,7 @@ use std::io::{self, Write};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -112,7 +113,8 @@ pub async fn run_interactive_mode(
 
     // Reconnection loop — each iteration is one connection session
     let session_result = loop {
-        let mut event_task = spawn_event_consumer(events, printer.clone(), config.color);
+        let mut event_task =
+            spawn_event_consumer(events, printer.clone(), config.color, config.debug);
 
         let result = run_command_loop(&client, &mut ctx, &mut event_task).await;
 
@@ -265,6 +267,7 @@ fn spawn_event_consumer(
     mut events: EslEventStream,
     printer: Printer,
     color_mode: crate::commands::ColorMode,
+    debug_level: EslDebugLevel,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(result) = events
@@ -273,6 +276,15 @@ fn spawn_event_consumer(
         {
             match result {
                 Ok(event) => {
+                    if let Some(raw) = event.raw_body() {
+                        info!(
+                            "Event body contained invalid UTF-8 ({} bytes), shown with \u{FFFD} replacements",
+                            raw.len()
+                        );
+                        if debug_level >= EslDebugLevel::Debug5 {
+                            debug!("Non-UTF-8 body bytes: {}", raw.escape_ascii());
+                        }
+                    }
                     if let Some(msg) = format_channel_event(&event, color_mode) {
                         printer.print(msg);
                     } else if is_log_event(&event) {
