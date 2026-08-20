@@ -793,7 +793,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 [[package]]
 name = "rustyline"
 version = "18.0.0"
-source = "git+https://github.com/ticpu/rustyline.git?branch=eventhandler-macro#a7d99578614d345e9e6a4d2e9aeef06abd874d88"
+source = "git+https://github.com/ticpu/rustyline.git?branch=eventhandler-macro#8cf4fdb9b2f385809ebf683424475a673ecadbb4"
 dependencies = [
  "bitflags",
  "clipboard-win",
