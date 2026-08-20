@@ -14,9 +14,9 @@ Cargo.lock
 Thumbs.db
 
 # Binary output
+/dist/
 fs_cli
 fs_cli-deb
-fs_cli.*
 *.exe
 
 # Debian packaging

@@ -9,69 +9,37 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: fs_cli
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            dockerfile: Containerfile
-            arch: amd64
-            binary_ext: ""
-          - target: aarch64-unknown-linux-gnu
-            dockerfile: Containerfile
-            arch: arm64
-            binary_ext: ""
-          - target: x86_64-pc-windows-gnu
-            dockerfile: Containerfile
-            arch: amd64
-            binary_ext: ".exe"
-            
+
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build binary in container
-      run: |
-        docker build -f ${{ matrix.dockerfile }} --build-arg TARGET=${{ matrix.target }} -t fs_cli-build .
-        CONTAINER=$(docker create fs_cli-build)
-        docker cp $CONTAINER:/app/target/release/${{ env.BINARY_NAME }}${{ matrix.binary_ext }} ${{ env.BINARY_NAME }}-${{ matrix.target }}${{ matrix.binary_ext }}
-        docker rm $CONTAINER
-        docker rmi fs_cli-build
-        chmod +x ${{ env.BINARY_NAME }}-${{ matrix.target }}${{ matrix.binary_ext }}
-        
+    - name: Cross-compile all targets
+      run: ./build.sh
+
     - name: Test binary
       run: |
-        if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-          # Test x86_64 binary thoroughly
-          version_output=$(./${{ env.BINARY_NAME }}-${{ matrix.target }}${{ matrix.binary_ext }} --version 2>&1)
-          echo "Version output: $version_output"
-          if [[ "$version_output" == *"fs_cli-rs"* ]]; then
-            echo "✅ Binary version test passed"
-          else
-            echo "❌ Binary version test failed - no version output"
-            exit 1
-          fi
-          
-          # Test help output
-          help_output=$(./${{ env.BINARY_NAME }}-${{ matrix.target }}${{ matrix.binary_ext }} --help 2>&1)
-          if [[ "$help_output" == *"FreeSWITCH"* && "$help_output" == *"Usage:"* ]]; then
-            echo "✅ Binary help test passed"
-          else
-            echo "❌ Binary help test failed - no help output"
-            exit 1
-          fi
-        else
-          echo "Skipping binary test for ${{ matrix.target }} (only testing x86_64 on CI)"
+        chmod +x dist/fs_cli.amd64
+        version_output=$(./dist/fs_cli.amd64 --version 2>&1)
+        echo "Version output: $version_output"
+        if [[ "$version_output" != *"fs_cli-rs"* ]]; then
+          echo "Binary version test failed"
+          exit 1
         fi
-        
+        help_output=$(./dist/fs_cli.amd64 --help 2>&1)
+        if [[ "$help_output" != *"FreeSWITCH"* || "$help_output" != *"Usage:"* ]]; then
+          echo "Binary help test failed"
+          exit 1
+        fi
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
-        path: ${{ env.BINARY_NAME }}-${{ matrix.target }}${{ matrix.binary_ext }}
+        name: fs_cli-binaries
+        path: dist/
         retention-days: 30
 
   release:
@@ -80,78 +48,55 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download all artifacts
+    - name: Download binaries
       uses: actions/download-artifact@v4
       with:
-        path: artifacts
-        
+        name: fs_cli-binaries
+        path: dist
+
     - name: Extract version from tag
       id: version
       run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-        
+
     - name: Prepare release assets
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
       run: |
-        cd artifacts
-        for dir in */; do
-          cd "$dir"
-          binary_file=$(ls)
-          
-          # Extract target info from directory name
-          if [[ "$dir" == *"aarch64"* ]]; then
-            arch="arm64"
-            ext=""
-          elif [[ "$dir" == *"windows"* ]]; then
-            arch="amd64"
-            ext=".exe"
-          else
-            arch="amd64"
-            ext=""
-          fi
-          
-          # Create appropriate naming
-          if [[ "$dir" == *"windows"* ]]; then
-            new_name="fs_cli_${{ steps.version.outputs.version }}_${arch}.windows${ext}"
-          else
-            new_name="fs_cli_${{ steps.version.outputs.version }}_${arch}.debian-compatible${ext}"
-          fi
-          
-          mv "$binary_file" "$new_name"
-          cd ..
-        done
-      
+        mv dist/fs_cli.amd64 "dist/fs_cli_${VERSION}_amd64.debian-compatible"
+        mv dist/fs_cli.arm64 "dist/fs_cli_${VERSION}_arm64.debian-compatible"
+        mv dist/fs_cli.exe "dist/fs_cli_${VERSION}_amd64.windows.exe"
+
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v3
       with:
         files: |
-          artifacts/*/*.debian-compatible
-          artifacts/*/*.windows.exe
+          dist/*.debian-compatible
+          dist/*.windows.exe
         draft: false
         prerelease: false
         generate_release_notes: false
         name: "FreeSWITCH CLI ${{ github.ref_name }}"
         body: |
           FreeSWITCH CLI client built for multiple platforms.
-          
+
           **Available Downloads:**
-          - **Linux AMD64**: `fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible` (built with Debian Buster for broad compatibility)
-          - **Linux ARM64**: `fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible` 
+          - **Linux AMD64**: `fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible` (built on Debian Bullseye for broad compatibility)
+          - **Linux ARM64**: `fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible`
           - **Windows AMD64**: `fs_cli_${{ steps.version.outputs.version }}_amd64.windows.exe`
-          
+
           **Linux Installation:**
           ```bash
           # For AMD64 (x86_64)
           wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible
           sudo install -m0755 fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible /usr/local/bin/fs_cli && rm fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible
-          
-          # For ARM64 (aarch64)  
+
+          # For ARM64 (aarch64)
           wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible
           sudo install -m0755 fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible /usr/local/bin/fs_cli && rm fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible
           ```
-          
+
           **Windows Usage:**
           Download `fs_cli_${{ steps.version.outputs.version }}_amd64.windows.exe` and run directly.
       env:

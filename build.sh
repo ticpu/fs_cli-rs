@@ -1,71 +1,27 @@
 #!/bin/bash
+# Cross-compiles every release target in one container build and writes the
+# binaries to dist/.
 
-# Detect container runtime (podman or docker)
+set -euo pipefail
+
+if [ $# -gt 0 ]; then
+    echo "Usage: $0" >&2
+    echo "Builds all targets at once; there is no per-target invocation." >&2
+    exit 2
+fi
+
 if command -v podman &> /dev/null; then
     CONTAINER_CMD="podman"
 elif command -v docker &> /dev/null; then
     CONTAINER_CMD="docker"
 else
-    echo "Error: Neither podman nor docker found"
+    echo "Error: Neither podman nor docker found" >&2
     exit 1
 fi
 
+cd "$(dirname "$0")"
+
 echo "Using $CONTAINER_CMD as container runtime"
+$CONTAINER_CMD build -f Containerfile --output "type=local,dest=dist" .
 
-# Default target
-ARG=${1:-x86_64}
-
-# Map short names to full targets
-case $ARG in
-    x86_64)
-        TARGET="x86_64-unknown-linux-gnu"
-        BINARY_NAME="fs_cli.x86_64"
-        SRC_BINARY="fs_cli"
-        ;;
-    aarch64)
-        TARGET="aarch64-unknown-linux-gnu"
-        BINARY_NAME="fs_cli.aarch64"
-        SRC_BINARY="fs_cli"
-        ;;
-    windows)
-        TARGET="x86_64-pc-windows-gnu"
-        BINARY_NAME="fs_cli.exe"
-        SRC_BINARY="fs_cli.exe"
-        ;;
-    # Support full target names too
-    x86_64-unknown-linux-gnu)
-        TARGET="x86_64-unknown-linux-gnu"
-        BINARY_NAME="fs_cli.x86_64"
-        SRC_BINARY="fs_cli"
-        ;;
-    aarch64-unknown-linux-gnu)
-        TARGET="aarch64-unknown-linux-gnu"
-        BINARY_NAME="fs_cli.aarch64"
-        SRC_BINARY="fs_cli"
-        ;;
-    x86_64-pc-windows-gnu)
-        TARGET="x86_64-pc-windows-gnu"
-        BINARY_NAME="fs_cli.exe"
-        SRC_BINARY="fs_cli.exe"
-        ;;
-    *)
-        echo "Error: Unsupported target $ARG"
-        echo "Usage: $0 [x86_64|aarch64|windows]"
-        exit 1
-        ;;
-esac
-
-echo "Building for target: $TARGET"
-
-# Build the container using git dependencies
-$CONTAINER_CMD build -f Containerfile -t fs_cli-build --build-arg TARGET=$TARGET . -q
-
-# Create temporary container and copy binary
-CONTAINER=$($CONTAINER_CMD create fs_cli-build)
-$CONTAINER_CMD cp $CONTAINER:/app/target/release/$SRC_BINARY $BINARY_NAME
-
-# Clean up
-$CONTAINER_CMD rm $CONTAINER || echo "Warning: failed to remove container $CONTAINER" >&2
-$CONTAINER_CMD rmi fs_cli-build -f || echo "Warning: failed to remove image fs_cli-build, it may persist" >&2
-
-echo "Binary extracted to $BINARY_NAME"
+ls -l dist

@@ -5,7 +5,8 @@ Rust-based interactive CLI client for FreeSWITCH using ESL (Event Socket Layer).
 
 ## Build System
 - Local: `cargo build --release`
-- Container: `./build.sh [x86_64|aarch64|windows]` (Debian Buster for compatibility)
+- Container: `./build.sh` cross-compiles all targets on Debian Bullseye in one
+  pass and extracts them to `dist/` (`fs_cli.amd64`, `fs_cli.arm64`, `fs_cli.exe`)
 - CI/CD: `.github/workflows/build.yml` builds multi-arch on push/tag
 
 ## Development Commands
