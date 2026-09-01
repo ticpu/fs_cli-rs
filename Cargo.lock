@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "fs_cli-rs"
-version = "1.4.3"
+version = "1.4.4"
 dependencies = [
  "anyhow",
  "chrono",
