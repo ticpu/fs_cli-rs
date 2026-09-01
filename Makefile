@@ -10,6 +10,7 @@ DEB_VERSION := $(patsubst v%,%,$(BASE_VERSION))
 DEB_AMD64 := $(NAME)_$(DEB_VERSION)_amd64.deb
 DEB_ARM64 := $(NAME)_$(DEB_VERSION)_arm64.deb
 BINARIES := dist/$(BINARY).amd64 dist/$(BINARY).arm64 dist/$(BINARY).exe
+FLOORS := dist/glibc-floor.amd64 dist/glibc-floor.arm64
 PKG := package.tmp
 
 .PHONY: all clean binaries deb deb-amd64 deb-arm64
@@ -29,19 +30,23 @@ define build-deb
 	install -D -m 755 -T "$<" "$(PKG)/usr/bin/$(BINARY)"
 	install -D -m 644 -T fs_cli.yaml "$(PKG)/usr/share/doc/$(NAME)/examples/fs_cli.yaml"
 	install -D -m 644 -T DEBIAN/control "$(PKG)/DEBIAN/control"
-	sed -i -e "s/^Version:.*/Version: $(DEB_VERSION)/" -e "s/^Architecture:.*/Architecture: $(1)/" "$(PKG)/DEBIAN/control"
+	sed -i -e "s/^Version:.*/Version: $(DEB_VERSION)/" \
+		-e "s/^Architecture:.*/Architecture: $(1)/" \
+		-e "s/^Depends:.*/Depends: libc6 (>= $$(cat dist/glibc-floor.$(1))), libgcc-s1/" \
+		"$(PKG)/DEBIAN/control"
+	@if grep -rq "$$PWD" "$(PKG)"; then echo "ERROR: package contains build path ($$PWD)" >&2; exit 1; fi
 	dpkg-deb --build --root-owner-group "$(PKG)" "$@"
 	rm -rf "$(PKG)"
 endef
 
-$(DEB_AMD64): dist/$(BINARY).amd64 DEBIAN/control
+$(DEB_AMD64): dist/$(BINARY).amd64 dist/glibc-floor.amd64 DEBIAN/control
 	$(call build-deb,amd64)
 
-$(DEB_ARM64): dist/$(BINARY).arm64 DEBIAN/control
+$(DEB_ARM64): dist/$(BINARY).arm64 dist/glibc-floor.arm64 DEBIAN/control
 	$(call build-deb,arm64)
 
 # One container build cross-compiles all three, so they share a single rule
-$(BINARIES) &: build.sh Containerfile Cargo.toml $(wildcard Cargo.lock) $(wildcard src/*)
+$(BINARIES) $(FLOORS) &: build.sh Containerfile Cargo.toml $(wildcard Cargo.lock) $(wildcard src/*)
 	./build.sh
 
 clean:

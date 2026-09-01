@@ -16,7 +16,7 @@ Interactive FreeSWITCH CLI client written in Rust using
 
 Pre-built binaries for Linux AMD64/ARM64 and Windows are available on the
 [releases page](https://github.com/ticpu/fs_cli-rs/releases). From v1.4.3 they
-are built on Debian Bullseye and need glibc 2.31 or newer; on Debian Buster and
+are built on Debian Bullseye and need glibc 2.30 or newer; on Debian Buster and
 other glibc 2.28 hosts, use
 [v1.4.2](https://github.com/ticpu/fs_cli-rs/releases/tag/v1.4.2) or build from
 source.

@@ -33,6 +33,9 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 
+# The .deb's glibc floor is read off each binary rather than guessed in the
+# control file: it moves with the base image, and too low a floor installs
+# cleanly and then dies at exec on a symbol version.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry \
     --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git \
     --mount=type=cache,target=/app/target,id=cargo-target \
@@ -43,7 +46,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry \
     mkdir /out; \
     cp target/x86_64-unknown-linux-gnu/release/fs_cli /out/fs_cli.amd64; \
     cp target/aarch64-unknown-linux-gnu/release/fs_cli /out/fs_cli.arm64; \
-    cp target/x86_64-pc-windows-gnu/release/fs_cli.exe /out/fs_cli.exe
+    cp target/x86_64-pc-windows-gnu/release/fs_cli.exe /out/fs_cli.exe; \
+    for arch in amd64 arm64; do \
+        readelf -W --dyn-syms "/out/fs_cli.$arch" \
+          | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+          | sort -Vu | tail -1 > "/out/glibc-floor.$arch"; \
+    done
 
 FROM scratch
 COPY --from=build /out/ /
