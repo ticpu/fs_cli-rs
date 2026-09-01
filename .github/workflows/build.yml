@@ -91,34 +91,17 @@ jobs:
         cd assets
         sha256sum fs_cli_* ./*.deb > SHA256SUMS
 
+    # Draft: sign-release.sh signs the assets and publishes it. A published
+    # release's assets can no longer be replaced once immutability is enabled.
+    # The annotated tag's message is the changelog the release process writes;
+    # contents:body drops the subject (already the title) and, on a signed tag,
+    # the PGP block.
     - name: Create Release
-      uses: softprops/action-gh-release@v3
-      with:
-        files: assets/*
-        draft: false
-        prerelease: false
-        generate_release_notes: false
-        name: "FreeSWITCH CLI ${{ github.ref_name }}"
-        body: |
-          FreeSWITCH CLI client built for multiple platforms.
-
-          **Available Downloads:**
-          - **Linux AMD64**: `fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible` (built on Debian Bullseye for broad compatibility)
-          - **Linux ARM64**: `fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible`
-          - **Windows AMD64**: `fs_cli_${{ steps.version.outputs.version }}_amd64.windows.exe`
-
-          **Linux Installation:**
-          ```bash
-          # For AMD64 (x86_64)
-          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible
-          sudo install -m0755 fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible /usr/local/bin/fs_cli && rm fs_cli_${{ steps.version.outputs.version }}_amd64.debian-compatible
-
-          # For ARM64 (aarch64)
-          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible
-          sudo install -m0755 fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible /usr/local/bin/fs_cli && rm fs_cli_${{ steps.version.outputs.version }}_arm64.debian-compatible
-          ```
-
-          **Windows Usage:**
-          Download `fs_cli_${{ steps.version.outputs.version }}_amd64.windows.exe` and run directly.
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" \
+          --draft \
+          --title "FreeSWITCH CLI $GITHUB_REF_NAME" \
+          --notes "$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME")" \
+          assets/*

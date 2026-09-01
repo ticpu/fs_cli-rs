@@ -19,6 +19,9 @@ fs_cli
 fs_cli-deb
 *.exe
 
+# Release signing workdir
+/scratch/
+
 # Debian packaging
 *.deb
 package.tmp

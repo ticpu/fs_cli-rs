@@ -75,10 +75,21 @@ EOF
 git push --tags
 ```
 
-7. WAIT for the tag's Release workflow to publish the artifacts
-   (`gh run watch`) — the AUR update reads the latest GitHub release.
+7. WAIT for the tag's Release workflow (`gh run watch`). It leaves a **draft**
+   release; the AUR update reads the latest published one, so it must not run
+   before step 8.
 
-8. Update the AUR package:
+8. Sign the assets and publish the release:
+
+```sh
+./sign-release.sh vX.Y.Z
+```
+
+   Signs every asset with the key from `git config user.signingkey`, uploads the
+   `.asc` files, then flips the release public as its last act. Assets can no
+   longer be added once a release is published, so signing never happens after.
+
+9. Update the AUR package:
 
 ```sh
 cd ~/.cache/paru/clone/fs_cli-rs/ && ./update-pkg.sh 2>&1 | grep -v Compiling
@@ -88,7 +99,7 @@ git push
    The script should print the new version; troubleshoot only if it fails.
    AUR commits get no Co-Authored-By trailer.
 
-9. Report the tag and changelog.
+10. Report the tag and changelog.
 
 ## Important
 
@@ -96,6 +107,7 @@ git push
   explicitly alongside Cargo.toml. It stays out of non-release commits.
 - The tag is IMMUTABLE once pushed — never retag. Wrong? Make a new patch release.
 - Release artifacts: `fs_cli_${version}_{amd64|arm64}.debian-compatible`,
-  `fs_cli_${version}_amd64.windows.exe`.
+  `fs_cli_${version}_amd64.windows.exe`, `fs-cli_${version}_{amd64|arm64}.deb`,
+  `SHA256SUMS`, and one `.asc` per asset.
 - ARM64 smoke test if needed:
   `QEMU_LD_PREFIX=/path/to/aarch64/root qemu-aarch64-static fs_cli --version`.
