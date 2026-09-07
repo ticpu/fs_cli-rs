@@ -92,39 +92,48 @@ impl Args {
         )?;
 
         if args.list_profiles {
-            println!("Available profiles:");
-            let mut profile_names = config.get_profile_names();
-            profile_names.sort();
-            for name in profile_names {
-                println!("  {}", name);
-            }
-            std::process::exit(0);
+            Self::print_profiles_and_exit(&config);
         }
 
-        let profile_name = args
-            .profile
-            .as_deref()
-            .unwrap_or("default");
-        let explicitly_named = args
-            .profile
-            .is_some();
+        let mut app_config = Self::resolve_profile(
+            &config,
+            args.profile
+                .as_deref(),
+        )?;
+        args.apply_to(&mut app_config)?;
+        Ok(app_config)
+    }
 
-        let mut app_config = match config.get_profile(profile_name) {
-            Ok(profile) => profile.into_app_config(),
-            Err(_) if !explicitly_named => ProfileConfig::default().into_app_config(),
+    /// `--list-profiles`: print every configured profile name and exit.
+    fn print_profiles_and_exit(config: &FsCliConfig) -> ! {
+        println!("Available profiles:");
+        let mut profile_names = config.get_profile_names();
+        profile_names.sort();
+        for name in profile_names {
+            println!("  {}", name);
+        }
+        std::process::exit(0);
+    }
+
+    /// The named profile, or the default profile when none was named, or an
+    /// error listing what is available when a named one does not exist.
+    fn resolve_profile(config: &FsCliConfig, profile: Option<&str>) -> Result<AppConfig> {
+        let profile_name = profile.unwrap_or("default");
+        let explicitly_named = profile.is_some();
+
+        match config.get_profile(profile_name) {
+            Ok(profile) => Ok(profile.into_app_config()),
+            Err(_) if !explicitly_named => Ok(ProfileConfig::default().into_app_config()),
             Err(_) => {
                 let mut names = config.get_profile_names();
                 names.sort();
-                return Err(anyhow::anyhow!(
+                Err(anyhow::anyhow!(
                     "Profile '{}' not found. Available profiles: {}",
                     profile_name,
                     names.join(", ")
-                ));
+                ))
             }
-        };
-
-        args.apply_to(&mut app_config)?;
-        Ok(app_config)
+        }
     }
 
     /// Apply CLI argument overrides to an already-loaded AppConfig.
