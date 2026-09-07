@@ -4,7 +4,7 @@ use crate::client_command::{ClientCommand, ParseError};
 use crate::log_level::{set_log_level, LogSetting};
 use crate::printer::Output;
 use anyhow::{Error, Result};
-use colored::*;
+use colored::Colorize;
 use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError, EslResponse};
 use std::collections::HashMap;
 use tracing::trace;

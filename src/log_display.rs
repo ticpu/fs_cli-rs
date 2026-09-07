@@ -1,7 +1,7 @@
 //! Log display functionality for fs_cli-rs
 
 use crate::printer::{ColorMode, Output};
-use colored::*;
+use colored::{ColoredString, Colorize};
 use freeswitch_esl_tokio::{EslEvent, EslEventType, EventHeader, HeaderLookup};
 use tracing::debug;
 
