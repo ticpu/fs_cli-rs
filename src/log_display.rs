@@ -100,15 +100,27 @@ mod tests {
     }
 
     #[test]
-    fn is_log_event_rejects_normal_event() {
+    fn is_log_event_rejects_non_log_events() {
         let mut event = EslEvent::new();
         event.set_header("Event-Name", "CHANNEL_CREATE");
         assert!(!is_log_event(&event));
+
+        let empty_event = EslEvent::new();
+        assert!(!is_log_event(&empty_event));
     }
 
     #[test]
-    fn is_log_event_rejects_empty_event() {
-        let event = EslEvent::new();
-        assert!(!is_log_event(&event));
+    fn format_colored_log_tag_only_with_tag() {
+        let message = "2024 [NOTICE] something happened";
+        let formatted = format_colored_log_tag_only(message, 5);
+        assert!(formatted.contains("2024 "));
+        assert!(formatted.contains("[NOTICE]"));
+        assert!(formatted.contains(" something happened"));
+    }
+
+    #[test]
+    fn format_colored_log_tag_only_without_tag() {
+        let message = "no bracket tag here";
+        assert_eq!(format_colored_log_tag_only(message, 5), message);
     }
 }

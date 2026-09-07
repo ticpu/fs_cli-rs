@@ -138,3 +138,36 @@ pub fn parse_console_complete_response(body: &str) -> Vec<Completion> {
 
     completions
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bracket_list_yields_one_candidate_per_bracket() {
+        let completions = parse_console_complete_response("[status]\t[reload]\t[shutdown]");
+        assert_eq!(completions.len(), 3);
+        assert!(matches!(&completions[0], Completion::Candidate(s) if s == "status"));
+        assert!(matches!(&completions[1], Completion::Candidate(s) if s == "reload"));
+        assert!(matches!(&completions[2], Completion::Candidate(s) if s == "shutdown"));
+    }
+
+    #[test]
+    fn write_fallback_yields_write() {
+        let completions = parse_console_complete_response("write=5:status profile");
+        assert_eq!(completions.len(), 1);
+        assert!(matches!(&completions[0], Completion::Write(s) if s == "status profile"));
+    }
+
+    #[test]
+    fn empty_body_yields_nothing() {
+        assert!(parse_console_complete_response("").is_empty());
+    }
+
+    #[test]
+    fn brackets_win_over_write_in_same_body() {
+        let completions = parse_console_complete_response("[status]\nwrite=5:status profile");
+        assert_eq!(completions.len(), 1);
+        assert!(matches!(&completions[0], Completion::Candidate(s) if s == "status"));
+    }
+}
