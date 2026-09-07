@@ -178,6 +178,7 @@ impl ProfileConfig {
             quiet: self.quiet,
             macros: self.macros,
             execute: Vec::new(),
+            log_file: None,
             max_auto_complete_uuid: self.max_auto_complete_uuid,
         }
     }
@@ -201,6 +202,7 @@ pub struct AppConfig {
     pub quiet: bool,
     pub macros: HashMap<String, String>,
     pub execute: Vec<String>,
+    pub log_file: Option<String>,
     pub max_auto_complete_uuid: u32,
 }
 

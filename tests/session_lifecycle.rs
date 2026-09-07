@@ -478,3 +478,44 @@ async fn reconnect_reruns_the_subscriptions() {
         .wait()
         .expect("reap fs_cli");
 }
+
+#[tokio::test]
+async fn no_terminal_and_no_commands_fails_loudly() {
+    let server = FakeEsl::start(Script::default()).await;
+    let dir = scratch_dir("no-terminal");
+
+    let output = tokio::task::spawn_blocking({
+        let mut command = cli(&dir, server.addr);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        move || {
+            command
+                .spawn()
+                .expect("spawn fs_cli")
+                .wait_with_output()
+                .expect("wait for fs_cli")
+        }
+    })
+    .await
+    .expect("join fs_cli");
+
+    assert!(
+        !output
+            .status
+            .success(),
+        "a session that cannot read commands must not exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("-x") && stderr.contains("--log-file"),
+        "the refusal must name the non-interactive options: {:?}",
+        stderr
+    );
+    assert_eq!(
+        server.connection_count(),
+        0,
+        "the mode check must run before connecting"
+    );
+}

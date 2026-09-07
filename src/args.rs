@@ -44,6 +44,10 @@ pub struct Args {
     #[arg(short = 'x', action = clap::ArgAction::Append)]
     pub execute: Vec<String>,
 
+    /// Write the FreeSWITCH log stream to PATH ("-" for stdout)
+    #[arg(long, value_name = "PATH")]
+    pub log_file: Option<String>,
+
     /// History file path
     #[arg(long)]
     pub history_file: Option<PathBuf>,
@@ -157,6 +161,9 @@ impl Args {
         if let Some(color) = self.color {
             config.color = color;
         }
+        if let Some(log_file) = &self.log_file {
+            config.log_file = Some(log_file.clone());
+        }
         if let Some(history_file) = &self.history_file {
             config.history_file = Some(history_file.clone());
         }
@@ -216,6 +223,7 @@ mod tests {
             debug: None,
             color: None,
             execute: Vec::new(),
+            log_file: None,
             history_file: None,
             timeout: None,
             retry: None,
@@ -236,6 +244,7 @@ mod tests {
             user: None,
             debug: EslDebugLevel::None,
             color: ColorMode::Line,
+            log_file: None,
             history_file: None,
             timeout: 2000,
             retry: true,

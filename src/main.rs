@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use freeswitch_esl_tokio::EslClient;
+use std::io::IsTerminal;
 use tracing::{debug, info};
 
 mod args;
@@ -32,6 +33,14 @@ async fn main() -> Result<()> {
 
     setup_logging(config.debug);
 
+    if !usable_mode(&config) {
+        eprintln!(
+            "fs_cli: interactive mode needs a terminal on both stdin and stdout.\n\
+             Give commands with -x/-X, or a log destination with --log-file PATH."
+        );
+        std::process::exit(1);
+    }
+
     debug!("About to connect to FreeSWITCH");
     let (client, events) = match connect_to_freeswitch_with_retry(&config).await {
         Ok(pair) => {
@@ -59,6 +68,18 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Interactive mode is the only mode that needs a terminal, and rustyline needs
+/// one on both streams before it will build its external printer.
+fn usable_mode(config: &AppConfig) -> bool {
+    !config
+        .execute
+        .is_empty()
+        || config
+            .log_file
+            .is_some()
+        || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal())
 }
 
 fn setup_logging(debug_level: EslDebugLevel) {
