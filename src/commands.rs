@@ -3,9 +3,9 @@
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::{set_log_level, LogSetting};
 use crate::printer::Printer;
-use anyhow::{anyhow, Error, Result};
+use anyhow::{Error, Result};
 use colored::*;
-use freeswitch_esl_tokio::{EslClient, EslError};
+use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -98,41 +98,49 @@ impl CommandProcessor {
             .print_err(message.to_string());
     }
 
-    /// Handle command execution errors with proper formatting
-    pub fn handle_error(&self, error: Error) {
-        let error_msg = if !self.no_color() {
+    fn labeled_error(&self, label: &str, message: &str) -> String {
+        if self.no_color() {
+            format!("{}: {}", label, message)
+        } else {
             format!(
                 "{}: {}",
-                "Error"
+                label
                     .red()
                     .bold(),
-                error
+                message
             )
-        } else {
-            format!("Error: {}", error)
-        };
-        self.print_error(&error_msg);
+        }
     }
 
-    /// Call the FreeSWITCH API, check success, and return the response body.
+    /// Handle command execution errors with proper formatting
+    pub fn handle_error(&self, error: Error) {
+        let message = self.labeled_error("Error", &format!("{:#}", error));
+        self.print_error(&message);
+    }
+
+    /// Call the FreeSWITCH API and return the response body verbatim.
     ///
-    /// Transport errors propagate as EslError. A non-success API response
-    /// returns an Err carrying the reply text (without "API Error:" prefix —
-    /// callers add their own framing).
+    /// Transport errors and refused commands propagate as `EslError`; callers
+    /// frame the latter through `EslError::command_failure`.
     async fn api_body(&self, client: &EslClient, command: &str) -> Result<String> {
         let response = client
             .api(command)
             .await?;
-        if !response.is_success() {
-            let reply = response
-                .reply_text()
-                .unwrap_or("unknown error");
-            return Err(anyhow!("{}", reply));
+        match response.api_result() {
+            Err(e)
+                if e.command_failure()
+                    .is_some() =>
+            {
+                Err(e.into())
+            }
+            // api_result() strips the "+OK " that a bare "+OK" reply is made
+            // of entirely, and calls the empty rest a ProtocolError; that reply
+            // is a success the display path still has to print.
+            _ => Ok(response
+                .body()
+                .unwrap_or_default()
+                .to_string()),
         }
-        Ok(response
-            .body()
-            .unwrap_or_default()
-            .to_string())
     }
 
     /// Execute a FreeSWITCH command
@@ -162,25 +170,19 @@ impl CommandProcessor {
                     self.print_message(&body);
                 }
             }
-            Err(e)
-                if e.downcast_ref::<EslError>()
-                    .is_some() =>
-            {
-                return Err(e);
-            }
             Err(e) => {
-                let error_msg = if !self.no_color() {
-                    format!(
-                        "{}: {}",
-                        "API Error"
-                            .red()
-                            .bold(),
-                        e
-                    )
-                } else {
-                    format!("API Error: {}", e)
+                let esl = e.downcast_ref::<EslError>();
+                if esl.is_some_and(EslError::is_connection_error) {
+                    return Err(e);
+                }
+                let (label, text) = match esl.and_then(EslError::command_failure) {
+                    Some(CommandFailure::Err(text) | CommandFailure::Unprefixed(text)) => {
+                        ("API Error", text.to_string())
+                    }
+                    Some(CommandFailure::Usage(text)) => ("Usage", text.to_string()),
+                    _ => ("API Error", format!("{:#}", e)),
                 };
-                self.print_error(&error_msg);
+                self.print_error(&self.labeled_error(label, &text));
             }
         }
 
