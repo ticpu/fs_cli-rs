@@ -138,10 +138,12 @@ pub async fn run_interactive_mode(
 
         match result {
             SessionEnd::Quit => {
-                client
+                if let Err(e) = client
                     .disconnect()
                     .await
-                    .ok();
+                {
+                    warn!("Disconnect on exit failed: {:#}", e);
+                }
                 break Ok(());
             }
             SessionEnd::Disconnected(cause) => {
@@ -162,10 +164,8 @@ pub async fn run_interactive_mode(
     readline_handle.abort();
 
     if session_result.is_err() {
-        // The readline thread is blocked inside rl.readline() and cannot be
-        // interrupted. Restore the terminal ourselves (rustyline won't get the
-        // chance) and return immediately; main.rs will call process::exit which
-        // kills the detached blocking thread.
+        // The readline thread is blocked in rl.readline() and cannot be
+        // interrupted, so rustyline never restores the terminal itself.
         #[cfg(unix)]
         if let Some(ref termios) = original_termios {
             restore_terminal_state(termios);
@@ -184,12 +184,8 @@ pub async fn run_interactive_mode(
     session_result
 }
 
-/// Subscribe to the events this session needs and enable the idle-liveness
-/// timer only when a HEARTBEAT subscription is permitted. A permission-
-/// restricted user (`esl-allowed-events` without HEARTBEAT) gets
-/// `-ERR permission denied`: warn and run without idle-liveness so the timer
-/// can't trip on a healthy idle socket. Runs for the initial connection and
-/// every reconnect.
+/// Idle-liveness is armed only when the HEARTBEAT subscription is permitted:
+/// without those events the timer would trip on a healthy idle socket.
 async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
     let subscription = if config.events {
         subscribe_to_events(client).await
@@ -200,15 +196,15 @@ async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
         Ok(()) => client.set_liveness_timeout(LIVENESS_TIMEOUT),
         Err(e) if is_permission_denied(&e) => {
             warn!(
-                "event subscription denied ({}); idle-liveness disabled for this user",
+                "event subscription denied ({:#}); idle-liveness disabled for this user",
                 e
             );
         }
-        Err(e) => warn!("Failed to subscribe to events: {}", e),
+        Err(e) => warn!("Failed to subscribe to events: {:#}", e),
     }
     if !config.quiet {
         if let Err(e) = enable_logging(client, config.log_level).await {
-            warn!("Failed to enable logging: {}", e);
+            warn!("Failed to enable logging: {:#}", e);
         }
     }
 }
@@ -244,11 +240,8 @@ fn spawn_event_consumer(mut events: EslEventStream, output: &Output) -> JoinHand
     })
 }
 
-/// Session-lifetime state shared across reconnect iterations.
-///
-/// Per-connection resources (`client`, `event_task`) are passed separately to
-/// `run_command_loop` so they can be swapped on reconnect without rebuilding
-/// this struct.
+/// Session-lifetime state; `client` and `event_task` stay out of it so a
+/// reconnect can swap them without rebuilding this.
 struct SessionParts<'a> {
     processor: &'a CommandProcessor,
     output: &'a Output,
