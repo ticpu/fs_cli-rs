@@ -17,8 +17,7 @@ pub struct FsCliConfig {
 
 /// Configuration for a single profile. Every field a profile may leave out
 /// falls back to `Default`, which states each default exactly once.
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(default)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ProfileConfig {
     /// FreeSWITCH hostname or IP address
     pub host: String,
@@ -85,6 +84,78 @@ impl Default for ProfileConfig {
             macros: crate::readline::get_default_fnkeys(),
             max_auto_complete_uuid: 32,
         }
+    }
+}
+
+/// What a profile actually spelled out. A key left blank is YAML null, which
+/// a plain `serde(default)` would reject rather than read as "unset".
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ProfileOverrides {
+    host: Option<String>,
+    port: Option<u16>,
+    password: Option<String>,
+    user: Option<String>,
+    debug: Option<EslDebugLevel>,
+    color: Option<ColorMode>,
+    history_file: Option<PathBuf>,
+    timeout: Option<u64>,
+    retry: Option<bool>,
+    reconnect: Option<bool>,
+    events: Option<bool>,
+    log_level: Option<LogSetting>,
+    quiet: Option<bool>,
+    macros: Option<HashMap<String, String>>,
+    max_auto_complete_uuid: Option<u32>,
+}
+
+impl<'de> Deserialize<'de> for ProfileConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let set = ProfileOverrides::deserialize(d)?;
+        let base = Self::default();
+        Ok(Self {
+            host: set
+                .host
+                .unwrap_or(base.host),
+            port: set
+                .port
+                .unwrap_or(base.port),
+            password: set
+                .password
+                .unwrap_or(base.password),
+            user: set.user,
+            debug: set
+                .debug
+                .unwrap_or(base.debug),
+            color: set
+                .color
+                .unwrap_or(base.color),
+            history_file: set.history_file,
+            timeout: set
+                .timeout
+                .unwrap_or(base.timeout),
+            retry: set
+                .retry
+                .unwrap_or(base.retry),
+            reconnect: set
+                .reconnect
+                .unwrap_or(base.reconnect),
+            events: set
+                .events
+                .unwrap_or(base.events),
+            log_level: set
+                .log_level
+                .unwrap_or(base.log_level),
+            quiet: set
+                .quiet
+                .unwrap_or(base.quiet),
+            macros: set
+                .macros
+                .unwrap_or(base.macros),
+            max_auto_complete_uuid: set
+                .max_auto_complete_uuid
+                .unwrap_or(base.max_auto_complete_uuid),
+        })
     }
 }
 
@@ -250,6 +321,38 @@ fs_cli:
         assert_eq!(app.host, "fs.example.test");
         assert_eq!(app.port, defaults.port);
         assert_eq!(app.timeout, defaults.timeout);
+        assert_eq!(app.macros, defaults.macros);
+        assert!(!app.retry);
+    }
+
+    /// A key left blank mid-edit is YAML null. It must read as "unset", not
+    /// fail the whole file and take every other profile in it down.
+    #[test]
+    fn a_blank_value_falls_back_like_a_missing_key() {
+        let yaml_content = r#"
+fs_cli:
+  blanks:
+    host:
+    port:
+    password:
+    timeout:
+    retry:
+    color:
+    log_level:
+    macros:
+"#;
+        let config: FsCliConfig = serde_yaml::from_str(yaml_content).unwrap();
+        let app = config
+            .get_profile("blanks")
+            .unwrap()
+            .into_app_config();
+        let defaults = ProfileConfig::default();
+        assert_eq!(app.host, defaults.host);
+        assert_eq!(app.port, defaults.port);
+        assert_eq!(app.password, defaults.password);
+        assert_eq!(app.timeout, defaults.timeout);
+        assert_eq!(app.color, defaults.color);
+        assert_eq!(app.log_level, defaults.log_level);
         assert_eq!(app.macros, defaults.macros);
         assert!(!app.retry);
     }
