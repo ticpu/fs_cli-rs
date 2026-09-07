@@ -14,7 +14,7 @@ use crate::console_complete::get_console_complete;
 use crate::esl_debug::EslDebugLevel;
 use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::{Output, Printer};
-use crate::readline::{build_macros, parse_function_key, run_readline_loop};
+use crate::readline::{build_macros, parse_function_key, run_readline_loop, ReadlineChannels};
 use anyhow::Result;
 use colored::Colorize;
 use crossterm::{
@@ -73,25 +73,23 @@ pub async fn run_interactive_mode(
 ) -> Result<()> {
     let mut output = Output::new(config.color);
 
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
-    let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
-    let (printer_tx, printer_rx) = oneshot::channel::<Printer>();
-    let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<CompletionRequest>();
-
     setup_subscriptions(&client, config).await;
     println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
 
     let macros = build_macros(config);
+    let (readline_chans, mut chans) = ReadlineChannels::new(macros.clone());
 
     #[cfg(unix)]
     let original_termios = save_terminal_state();
 
     let config_clone = config.clone();
-    let readline_handle = tokio::task::spawn_blocking(move || {
-        run_readline_loop(cmd_tx, quit_tx, printer_tx, completion_tx, &config_clone)
-    });
+    let readline_handle =
+        tokio::task::spawn_blocking(move || run_readline_loop(readline_chans, &config_clone));
 
-    let printer = match printer_rx.await {
+    let printer = match chans
+        .printer
+        .await
+    {
         Ok(p) => p,
         Err(_) => {
             error!("Failed to receive external printer");
@@ -107,9 +105,9 @@ pub async fn run_interactive_mode(
         processor: &processor,
         macros: &macros,
         channel_provider: &channel_provider,
-        cmd_rx: &mut cmd_rx,
-        quit_rx: &mut quit_rx,
-        completion_rx: &mut completion_rx,
+        cmd_rx: &mut chans.commands,
+        quit_rx: &mut chans.quit,
+        completion_rx: &mut chans.completions,
     };
 
     // Reconnection loop — each iteration is one connection session

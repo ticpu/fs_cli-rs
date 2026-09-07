@@ -53,6 +53,47 @@ pub fn build_macros(config: &AppConfig) -> HashMap<String, String> {
     macros
 }
 
+/// Everything the readline thread sends on, plus the macros it binds.
+pub struct ReadlineChannels {
+    commands: mpsc::UnboundedSender<String>,
+    quit: oneshot::Sender<()>,
+    printer: oneshot::Sender<Printer>,
+    completions: mpsc::UnboundedSender<CompletionRequest>,
+    macros: HashMap<String, String>,
+}
+
+/// The session-side ends of `ReadlineChannels`.
+pub struct SessionChannels {
+    pub commands: mpsc::UnboundedReceiver<String>,
+    pub quit: oneshot::Receiver<()>,
+    pub printer: oneshot::Receiver<Printer>,
+    pub completions: mpsc::UnboundedReceiver<CompletionRequest>,
+}
+
+impl ReadlineChannels {
+    pub fn new(macros: HashMap<String, String>) -> (Self, SessionChannels) {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let (quit_tx, quit_rx) = oneshot::channel();
+        let (printer_tx, printer_rx) = oneshot::channel();
+        let (completion_tx, completion_rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                commands: cmd_tx,
+                quit: quit_tx,
+                printer: printer_tx,
+                completions: completion_tx,
+                macros,
+            },
+            SessionChannels {
+                commands: cmd_rx,
+                quit: quit_rx,
+                printer: printer_rx,
+                completions: completion_rx,
+            },
+        )
+    }
+}
+
 fn setup_function_key_bindings(
     rl: &mut Editor<FsCliCompleter, FileHistory>,
     macros: &HashMap<String, String>,
@@ -76,13 +117,15 @@ fn setup_function_key_bindings(
 }
 
 /// Run the readline loop in a blocking thread
-pub fn run_readline_loop(
-    cmd_tx: mpsc::UnboundedSender<String>,
-    quit_tx: oneshot::Sender<()>,
-    printer_tx: oneshot::Sender<Printer>,
-    completion_tx: mpsc::UnboundedSender<CompletionRequest>,
-    config: &AppConfig,
-) -> Result<()> {
+pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<()> {
+    let ReadlineChannels {
+        commands: cmd_tx,
+        quit: quit_tx,
+        printer: printer_tx,
+        completions: completion_tx,
+        macros,
+    } = chans;
+
     let rl_config = rustyline::Config::builder()
         .completion_type(rustyline::CompletionType::List)
         .completion_show_all_if_ambiguous(true)
@@ -92,7 +135,6 @@ pub fn run_readline_loop(
     let completer = FsCliCompleter::new(completion_tx, config.debug);
     rl.set_helper(Some(completer));
 
-    let macros = build_macros(config);
     setup_function_key_bindings(&mut rl, &macros)?;
 
     let printer = rl.create_external_printer()?;
