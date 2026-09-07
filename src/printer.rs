@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 use tracing::warn;
 
 /// Color mode for log display
-#[derive(Debug, Clone, Copy, PartialEq, strum::EnumString, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, strum::EnumString, strum::Display, clap::ValueEnum)]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+#[clap(rename_all = "lowercase")]
 pub enum ColorMode {
     Never,
     Tag,
