@@ -2,7 +2,7 @@
 
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::{set_log_level, LogSetting};
-use crate::printer::Printer;
+use crate::printer::Output;
 use anyhow::{Error, Result};
 use colored::*;
 use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError};
@@ -63,59 +63,28 @@ impl<'de> Deserialize<'de> for ColorMode {
 
 /// Command processor for FreeSWITCH CLI commands
 pub struct CommandProcessor {
-    color_mode: ColorMode,
+    output: Output,
     debug_level: EslDebugLevel,
-    printer: Printer,
 }
 
 impl CommandProcessor {
     /// Create new command processor
-    pub fn new(color_mode: ColorMode, debug_level: EslDebugLevel) -> Self {
+    pub fn new(output: &Output, debug_level: EslDebugLevel) -> Self {
         Self {
-            color_mode,
+            output: output.clone(),
             debug_level,
-            printer: Printer::none(),
         }
-    }
-
-    /// Check if colors should be disabled
-    fn no_color(&self) -> bool {
-        self.color_mode == ColorMode::Never
-    }
-
-    /// Set external printer for coordinated output
-    pub fn set_printer(&mut self, printer: Printer) {
-        self.printer = printer;
     }
 
     fn print_message(&self, message: &str) {
-        self.printer
+        self.output
             .print(message.to_string());
-    }
-
-    fn print_error(&self, message: &str) {
-        self.printer
-            .print_err(message.to_string());
-    }
-
-    fn labeled_error(&self, label: &str, message: &str) -> String {
-        if self.no_color() {
-            format!("{}: {}", label, message)
-        } else {
-            format!(
-                "{}: {}",
-                label
-                    .red()
-                    .bold(),
-                message
-            )
-        }
     }
 
     /// Handle command execution errors with proper formatting
     pub fn handle_error(&self, error: Error) {
-        let message = self.labeled_error("Error", &format!("{:#}", error));
-        self.print_error(&message);
+        self.output
+            .print_labeled_error("Error", &error);
     }
 
     /// Call the FreeSWITCH API and return the response body verbatim.
@@ -175,14 +144,17 @@ impl CommandProcessor {
                 if esl.is_some_and(EslError::is_connection_error) {
                     return Err(e);
                 }
-                let (label, text) = match esl.and_then(EslError::command_failure) {
-                    Some(CommandFailure::Err(text) | CommandFailure::Unprefixed(text)) => {
-                        ("API Error", text.to_string())
-                    }
-                    Some(CommandFailure::Usage(text)) => ("Usage", text.to_string()),
-                    _ => ("API Error", format!("{:#}", e)),
-                };
-                self.print_error(&self.labeled_error(label, &text));
+                match esl.and_then(EslError::command_failure) {
+                    Some(CommandFailure::Err(text) | CommandFailure::Unprefixed(text)) => self
+                        .output
+                        .print_labeled("API Error", text),
+                    Some(CommandFailure::Usage(text)) => self
+                        .output
+                        .print_labeled("Usage", text),
+                    _ => self
+                        .output
+                        .print_labeled_error("API Error", &e),
+                }
             }
         }
 
@@ -320,11 +292,9 @@ Use Tab for command completion and Up/Down arrows for history.
             fnkey_lines
         );
 
-        let formatted_help = if !self.no_color() {
-            format!("{}", help_text.cyan())
-        } else {
-            help_text
-        };
+        let formatted_help = self
+            .output
+            .colorize(&help_text, |s| s.cyan());
         self.print_message(&formatted_help);
     }
 }

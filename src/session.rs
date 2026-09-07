@@ -12,7 +12,7 @@ use crate::connection::{
 use crate::console_complete::get_console_complete;
 use crate::esl_debug::EslDebugLevel;
 use crate::log_display::{display_log_event, is_log_event};
-use crate::printer::Printer;
+use crate::printer::{Output, Printer};
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
 use anyhow::Result;
 use colored::Colorize;
@@ -70,7 +70,7 @@ pub async fn run_interactive_mode(
     mut events: EslEventStream,
     config: &AppConfig,
 ) -> Result<()> {
-    let mut processor = CommandProcessor::new(config.color, config.debug);
+    let mut output = Output::new(config.color);
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
     let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
@@ -97,7 +97,8 @@ pub async fn run_interactive_mode(
             Printer::none()
         }
     };
-    processor.set_printer(printer.clone());
+    output.set_printer(printer);
+    let processor = CommandProcessor::new(&output, config.debug);
 
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
 
@@ -113,8 +114,7 @@ pub async fn run_interactive_mode(
 
     // Reconnection loop — each iteration is one connection session
     let session_result = loop {
-        let mut event_task =
-            spawn_event_consumer(events, printer.clone(), config.color, config.debug);
+        let mut event_task = spawn_event_consumer(events, &output, config.debug);
 
         let result = run_command_loop(&client, &mut ctx, &mut event_task).await;
 
@@ -209,10 +209,7 @@ async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
     }
 }
 
-fn format_channel_event(
-    event: &freeswitch_esl_tokio::EslEvent,
-    color_mode: crate::commands::ColorMode,
-) -> Option<String> {
+fn format_channel_event(event: &freeswitch_esl_tokio::EslEvent, output: &Output) -> Option<String> {
     let event_type = event.event_type()?;
 
     let label = match event_type {
@@ -254,21 +251,16 @@ fn format_channel_event(
         }
     };
 
-    Some(match color_mode {
-        crate::commands::ColorMode::Never => line,
-        _ => line
-            .cyan()
-            .to_string(),
-    })
+    Some(output.colorize(&line, |s| s.cyan()))
 }
 
 /// Spawn a task that consumes events and displays log/channel messages
 fn spawn_event_consumer(
     mut events: EslEventStream,
-    printer: Printer,
-    color_mode: crate::commands::ColorMode,
+    output: &Output,
     debug_level: EslDebugLevel,
 ) -> JoinHandle<()> {
+    let output = output.clone();
     tokio::spawn(async move {
         while let Some(result) = events
             .recv()
@@ -285,10 +277,10 @@ fn spawn_event_consumer(
                             debug!("Non-UTF-8 body bytes: {}", raw.escape_ascii());
                         }
                     }
-                    if let Some(msg) = format_channel_event(&event, color_mode) {
-                        printer.print(msg);
+                    if let Some(msg) = format_channel_event(&event, &output) {
+                        output.print(msg);
                     } else if is_log_event(&event) {
-                        display_log_event(&event, color_mode, &printer);
+                        display_log_event(&event, &output);
                     }
                 }
                 Err(e) => {

@@ -1,7 +1,7 @@
 //! Log display functionality for fs_cli-rs
 
 use crate::commands::ColorMode;
-use crate::printer::Printer;
+use crate::printer::Output;
 use colored::*;
 use freeswitch_esl_tokio::{EslEvent, EventHeader};
 use tracing::debug;
@@ -13,7 +13,7 @@ pub fn is_log_event(event: &EslEvent) -> bool {
 }
 
 /// Display a log event with appropriate formatting and colors.
-pub fn display_log_event(event: &EslEvent, color_mode: ColorMode, printer: &Printer) {
+pub fn display_log_event(event: &EslEvent, output: &Output) {
     let log_level = event
         .header(EventHeader::LogLevel)
         .and_then(|raw| {
@@ -36,7 +36,7 @@ pub fn display_log_event(event: &EslEvent, color_mode: ColorMode, printer: &Prin
         return;
     }
 
-    let formatted_message = match color_mode {
+    let formatted_message = match output.color() {
         ColorMode::Never => message
             .trim()
             .to_string(),
@@ -44,7 +44,7 @@ pub fn display_log_event(event: &EslEvent, color_mode: ColorMode, printer: &Prin
         ColorMode::Line => format_colored_log_full_line(message.trim(), log_level),
     };
 
-    printer.print(formatted_message);
+    output.print(formatted_message);
 }
 
 fn colorize_by_level(text: &str, log_level: u32) -> ColoredString {

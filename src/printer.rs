@@ -1,17 +1,12 @@
 //! Shared printer for coordinated terminal output.
 
+use crate::commands::ColorMode;
+use colored::{ColoredString, Colorize};
 use rustyline::ExternalPrinter;
 use std::sync::{Arc, Mutex};
 use tracing::warn;
 
 /// Coordinated terminal printer. Clone is cheap (inner Arc clone).
-///
-/// Uses `std::sync::Mutex` with a blocking lock: nothing holds this lock
-/// across an await point, contention is momentary, and blocking eliminates
-/// the nondeterministic raw-stdout bypass that `try_lock` caused.
-///
-/// When no printer is present (non-interactive or batch mode) output goes
-/// to stdout/stderr directly.
 #[derive(Clone)]
 pub struct Printer(Option<Arc<Mutex<dyn ExternalPrinter + Send>>>);
 
@@ -28,43 +23,91 @@ impl Printer {
 
     /// Print a message through the rustyline printer or stdout.
     pub fn print(&self, msg: String) {
-        if let Some(arc) = &self.0 {
-            match arc.lock() {
-                Ok(mut p) => {
-                    if let Err(e) = p.print(msg.clone()) {
-                        warn!("ExternalPrinter::print failed ({:?}): {}", msg, e);
-                        println!("{}", msg);
-                    }
-                    return;
-                }
-                Err(e) => {
-                    warn!("Printer mutex poisoned, falling back to stdout: {}", e);
-                }
-            }
-        }
-        println!("{}", msg);
+        self.emit(msg, |m| println!("{}", m));
     }
 
     /// Print an error message through the rustyline printer or stderr.
     ///
-    /// When a printer is active (interactive session), errors go through it so
-    /// all output reaches the tty via the same redraw-safe path. stderr split
-    /// only applies when there is no printer (batch / non-interactive mode).
+    /// With a printer active every line goes through it, so the tty sees one
+    /// redraw-safe path; the stderr split only exists in batch mode.
     pub fn print_err(&self, msg: String) {
+        self.emit(msg, |m| eprintln!("{}", m));
+    }
+
+    /// Blocking lock: nothing holds it across an await, and `try_lock` used to
+    /// bypass to raw stdout nondeterministically.
+    fn emit(&self, msg: String, fallback: fn(&str)) {
         if let Some(arc) = &self.0 {
             match arc.lock() {
                 Ok(mut p) => {
                     if let Err(e) = p.print(msg.clone()) {
                         warn!("ExternalPrinter::print failed ({:?}): {}", msg, e);
-                        eprintln!("{}", msg);
+                        fallback(&msg);
                     }
                     return;
                 }
                 Err(e) => {
-                    warn!("Printer mutex poisoned, falling back to stderr: {}", e);
+                    warn!("Printer mutex poisoned, falling back to stdio: {}", e);
                 }
             }
         }
-        eprintln!("{}", msg);
+        fallback(&msg);
+    }
+}
+
+/// Terminal output: where lines go and whether they carry color.
+#[derive(Clone)]
+pub struct Output {
+    printer: Printer,
+    color: ColorMode,
+}
+
+impl Output {
+    pub fn new(color: ColorMode) -> Self {
+        Self {
+            printer: Printer::none(),
+            color,
+        }
+    }
+
+    pub fn set_printer(&mut self, printer: Printer) {
+        self.printer = printer;
+    }
+
+    pub fn color(&self) -> ColorMode {
+        self.color
+    }
+
+    pub fn print(&self, msg: String) {
+        self.printer
+            .print(msg);
+    }
+
+    pub fn print_err(&self, msg: String) {
+        self.printer
+            .print_err(msg);
+    }
+
+    /// Bold-red `Label: message`, with the error's full source chain.
+    pub fn print_labeled_error(&self, label: &str, err: &anyhow::Error) {
+        self.print_labeled(label, &format!("{:#}", err));
+    }
+
+    /// Bold-red `Label: message`.
+    pub fn print_labeled(&self, label: &str, message: &str) {
+        self.print_err(format!(
+            "{}: {}",
+            self.colorize(label, |s| s
+                .red()
+                .bold()),
+            message
+        ));
+    }
+
+    pub fn colorize(&self, text: &str, style: impl FnOnce(&str) -> ColoredString) -> String {
+        match self.color {
+            ColorMode::Never => text.to_string(),
+            _ => style(text).to_string(),
+        }
     }
 }

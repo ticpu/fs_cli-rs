@@ -85,7 +85,8 @@ async fn execute_commands(
     commands: &[String],
     config: &AppConfig,
 ) -> Result<()> {
-    let processor = CommandProcessor::new(config.color, config.debug);
+    let output = printer::Output::new(config.color);
+    let processor = CommandProcessor::new(&output, config.debug);
     for command in commands {
         processor
             .execute_command(client, command)
