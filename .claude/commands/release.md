@@ -59,7 +59,11 @@ git commit -m "release: version X.Y.Z"
 git push
 ```
 
-5. Wait for CI to be green before tagging (`gh run watch` or `gh run list`). CI
+5. Wait for CI to be green before tagging (`./watch-ci.sh`). It pins the workflow
+   and the commit SHA and passes `--exit-status`; never select a run with
+   `--branch ... --limit 1`, which reads whatever ran most recently on the
+   branch rather than the commit being released, and never pass a short SHA to
+   `--commit`, which matches nothing. CI
    validates the binaries with `--version` and `--help` output checks on all
    targets. Never tag on red or pending CI.
 
@@ -75,7 +79,7 @@ EOF
 git push --tags
 ```
 
-7. WAIT for the tag's Release workflow (`gh run watch`). It leaves a **draft**
+7. WAIT for the tag's Release workflow (`./watch-ci.sh vX.Y.Z`). It leaves a **draft**
    release; the AUR update reads the latest published one, so it must not run
    before step 8.
 
