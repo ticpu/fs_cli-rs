@@ -52,7 +52,7 @@ impl Printer {
 
     /// Print a message through the rustyline printer or stdout.
     pub fn print(&self, msg: String) {
-        self.emit(msg, |m| println!("{}", m));
+        self.emit(msg, &|m| println!("{}", m));
     }
 
     /// Print an error message through the rustyline printer or stderr.
@@ -60,12 +60,12 @@ impl Printer {
     /// With a printer active every line goes through it, so the tty sees one
     /// redraw-safe path; the stderr split only exists in batch mode.
     pub fn print_err(&self, msg: String) {
-        self.emit(msg, |m| eprintln!("{}", m));
+        self.emit(msg, &|m| eprintln!("{}", m));
     }
 
     /// Blocking lock: nothing holds it across an await, and `try_lock` used to
     /// bypass to raw stdout nondeterministically.
-    fn emit(&self, msg: String, fallback: fn(&str)) {
+    fn emit(&self, msg: String, fallback: &dyn Fn(&str)) {
         if let Some(arc) = &self.0 {
             match arc.lock() {
                 Ok(mut p) => {
@@ -137,6 +137,131 @@ impl Output {
         match self.color {
             ColorMode::Never => text.to_string(),
             _ => style(text).to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyline::error::ReadlineError;
+    use std::cell::Cell;
+
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+
+    impl Recorder {
+        fn lines(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap()
+                .clone()
+        }
+    }
+
+    impl ExternalPrinter for Recorder {
+        fn print(&mut self, msg: String) -> rustyline::Result<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(msg);
+            Ok(())
+        }
+    }
+
+    struct BrokenPrinter;
+
+    impl ExternalPrinter for BrokenPrinter {
+        fn print(&mut self, _msg: String) -> rustyline::Result<()> {
+            Err(ReadlineError::Io(std::io::Error::other(
+                "external printer is gone",
+            )))
+        }
+    }
+
+    fn output_with(color: ColorMode, recorder: &Recorder) -> Output {
+        let mut output = Output::new(color);
+        output.set_printer(Printer::with_external(recorder.clone()));
+        output
+    }
+
+    #[test]
+    fn both_streams_go_through_the_external_printer() {
+        let recorder = Recorder::default();
+        let printer = Printer::with_external(recorder.clone());
+        printer.print("out".to_string());
+        printer.print_err("err".to_string());
+        assert_eq!(recorder.lines(), vec!["out", "err"]);
+    }
+
+    #[test]
+    fn without_a_printer_the_line_takes_the_stdio_fallback() {
+        let taken = Mutex::new(Vec::new());
+        Printer::none().emit("plain".to_string(), &|m| {
+            taken
+                .lock()
+                .unwrap()
+                .push(m.to_string())
+        });
+        assert_eq!(
+            *taken
+                .lock()
+                .unwrap(),
+            vec!["plain"]
+        );
+    }
+
+    #[test]
+    fn a_failing_printer_still_delivers_the_line() {
+        let taken = Mutex::new(Vec::new());
+        Printer::with_external(BrokenPrinter).emit("plain".to_string(), &|m| {
+            taken
+                .lock()
+                .unwrap()
+                .push(m.to_string())
+        });
+        assert_eq!(
+            *taken
+                .lock()
+                .unwrap(),
+            vec!["plain"]
+        );
+    }
+
+    #[test]
+    fn print_labeled_joins_label_and_message() {
+        let recorder = Recorder::default();
+        output_with(ColorMode::Never, &recorder).print_labeled("Warning", "disk is full");
+        assert_eq!(recorder.lines(), vec!["Warning: disk is full"]);
+    }
+
+    #[test]
+    fn print_labeled_error_keeps_the_whole_source_chain() {
+        let recorder = Recorder::default();
+        let err = anyhow::anyhow!("connection refused").context("could not reach FreeSWITCH");
+        output_with(ColorMode::Never, &recorder).print_labeled_error("Error", &err);
+        assert_eq!(
+            recorder.lines(),
+            vec!["Error: could not reach FreeSWITCH: connection refused"]
+        );
+    }
+
+    #[test]
+    fn colorize_never_returns_the_text_untouched() {
+        let styled = Cell::new(false);
+        let plain = Output::new(ColorMode::Never).colorize("tag", |s| {
+            styled.set(true);
+            ColoredString::from(s)
+        });
+        assert_eq!(plain, "tag");
+        assert!(!styled.get());
+    }
+
+    #[test]
+    fn colorize_applies_the_style_when_color_is_on() {
+        for mode in [ColorMode::Tag, ColorMode::Line] {
+            let styled = Output::new(mode).colorize("tag", |_| ColoredString::from("styled"));
+            assert_eq!(styled, "styled");
         }
     }
 }
