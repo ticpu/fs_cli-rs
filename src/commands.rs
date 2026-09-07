@@ -211,29 +211,21 @@ impl CommandProcessor {
                 format!("handle_special_command: parts[0] = '{}'", parts[0])
             });
 
-        match parts[0] {
-            "/log" => {
-                self.debug_level
-                    .debug_print(EslDebugLevel::Debug6, || "Matched /log command".to_string());
+        match parts[0]
+            .to_lowercase()
+            .as_str()
+        {
+            "/log" | "log" => {
                 self.handle_log_command(client, &parts[1..])
                     .await
             }
-            _ => match parts[0]
-                .to_lowercase()
-                .as_str()
-            {
-                "log" => {
-                    self.handle_log_command(client, &parts[1..])
-                        .await
-                }
-                "uptime" => {
-                    let body = self
-                        .api_body(client, "status")
-                        .await?;
-                    Ok(Some(self.extract_uptime(&body)))
-                }
-                _ => Ok(None),
-            },
+            "uptime" => {
+                let body = self
+                    .api_body(client, "status")
+                    .await?;
+                Ok(Some(self.extract_uptime(&body)))
+            }
+            _ => Ok(None),
         }
     }
 
