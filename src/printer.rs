@@ -110,6 +110,12 @@ impl LogSink {
             broken: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Flag the caller keeps once the sink is handed to a [`Printer`].
+    pub fn broken_flag(&self) -> Arc<AtomicBool> {
+        self.broken
+            .clone()
+    }
 }
 
 impl ExternalPrinter for LogSink {

@@ -52,6 +52,10 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub log_file: Option<String>,
 
+    /// Give up on -X results after MS milliseconds (default: wait forever)
+    #[arg(long, value_name = "MS")]
+    pub job_timeout: Option<u64>,
+
     /// History file path
     #[arg(long)]
     pub history_file: Option<PathBuf>,
@@ -170,6 +174,9 @@ impl Args {
         if let Some(log_file) = &self.log_file {
             config.log_file = Some(log_file.clone());
         }
+        if let Some(job_timeout) = self.job_timeout {
+            config.job_timeout = Some(job_timeout);
+        }
         if let Some(history_file) = &self.history_file {
             config.history_file = Some(history_file.clone());
         }
@@ -258,6 +265,7 @@ mod tests {
             execute: Vec::new(),
             bg_execute: Vec::new(),
             log_file: None,
+            job_timeout: None,
             history_file: None,
             timeout: None,
             retry: None,
@@ -279,6 +287,7 @@ mod tests {
             debug: EslDebugLevel::None,
             color: ColorMode::Line,
             log_file: None,
+            job_timeout: None,
             history_file: None,
             timeout: 2000,
             retry: true,

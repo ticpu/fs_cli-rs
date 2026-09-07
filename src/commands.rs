@@ -102,22 +102,28 @@ impl CommandProcessor {
                     self.print_message(&body);
                 }
             }
-            // Only a refused command is reported and survived. A transport
-            // fault propagates, so `-x` still exits non-zero on one.
-            // qual:allow(coupling, deh) reason: "this match turns a refused command into user-facing text; handling the error here is the point"
-            Err(e) => match e
-                .downcast_ref::<EslError>()
-                .and_then(EslError::command_failure)
-                .and_then(|f| frame_failure(&f))
-            {
-                Some((label, text)) => self
-                    .output
-                    .print_labeled(label, text),
-                None => return Err(e),
-            },
+            Err(e) => return self.report_refusal(e),
         }
 
         Ok(())
+    }
+
+    /// Print a refused command and survive it; a transport fault propagates, so
+    /// a batch run still exits non-zero on one.
+    // qual:allow(coupling, deh) reason: "this match turns a refused command into user-facing text; handling the error here is the point"
+    pub fn report_refusal(&self, error: Error) -> Result<()> {
+        match error
+            .downcast_ref::<EslError>()
+            .and_then(EslError::command_failure)
+            .and_then(|f| frame_failure(&f))
+        {
+            Some((label, text)) => {
+                self.output
+                    .print_labeled(label, text);
+                Ok(())
+            }
+            None => Err(error),
+        }
     }
 
     /// Handle special CLI commands that need custom processing

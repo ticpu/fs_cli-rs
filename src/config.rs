@@ -179,6 +179,7 @@ impl ProfileConfig {
             macros: self.macros,
             execute: Vec::new(),
             log_file: None,
+            job_timeout: None,
             max_auto_complete_uuid: self.max_auto_complete_uuid,
         }
     }
@@ -212,6 +213,7 @@ pub struct AppConfig {
     pub macros: HashMap<String, String>,
     pub execute: Vec<BatchCommand>,
     pub log_file: Option<String>,
+    pub job_timeout: Option<u64>,
     pub max_auto_complete_uuid: u32,
 }
 

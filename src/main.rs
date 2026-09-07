@@ -6,6 +6,7 @@ use std::io::IsTerminal;
 use tracing::{debug, info};
 
 mod args;
+mod batch;
 mod channel_info;
 mod client_command;
 mod commands;
@@ -21,8 +22,7 @@ mod readline;
 mod session;
 
 use args::Args;
-use commands::CommandProcessor;
-use config::{AppConfig, BatchCommand};
+use config::AppConfig;
 use connection::{connect_to_freeswitch_with_retry, print_connect_error};
 use esl_debug::EslDebugLevel;
 use log_display::LogDestination;
@@ -64,23 +64,39 @@ async fn main() -> Result<()> {
         .execute
         .is_empty()
     {
-        execute_commands(&client, &config.execute, &config).await?;
-        info!("Disconnecting from FreeSWITCH...");
-        client
-            .disconnect()
-            .await?;
-    } else if let Err(e) =
-        session::run_interactive_mode(client, events, &config, log_destination).await
-    {
-        eprintln!("{:#}", e);
-        std::process::exit(1);
+        batch::run_batch(&client, events, &config, log_destination).await?;
+        disconnect(&client).await?;
+    } else if terminal_available() {
+        if let Err(e) =
+            session::run_interactive_mode(client, events, &config, log_destination).await
+        {
+            eprintln!("{:#}", e);
+            std::process::exit(1);
+        }
+    } else {
+        let destination = log_destination.context("interactive mode needs a terminal")?;
+        batch::run_streaming(&client, events, &config, destination).await?;
+        disconnect(&client).await?;
     }
 
     Ok(())
 }
 
-/// Interactive mode is the only mode that needs a terminal, and rustyline needs
-/// one on both streams before it will build its external printer.
+async fn disconnect(client: &EslClient) -> Result<()> {
+    info!("Disconnecting from FreeSWITCH...");
+    client
+        .disconnect()
+        .await?;
+    Ok(())
+}
+
+/// rustyline needs a terminal on both streams before it will build its external
+/// printer, so that pair is what decides whether interactive mode is possible.
+fn terminal_available() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+/// Interactive mode is the only mode that needs a terminal.
 fn usable_mode(config: &AppConfig) -> bool {
     !config
         .execute
@@ -88,7 +104,7 @@ fn usable_mode(config: &AppConfig) -> bool {
         || config
             .log_file
             .is_some()
-        || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal())
+        || terminal_available()
 }
 
 fn setup_logging(debug_level: EslDebugLevel) {
@@ -100,53 +116,4 @@ fn setup_logging(debug_level: EslDebugLevel) {
         .with_file(false)
         .with_line_number(false)
         .init();
-}
-
-async fn execute_commands(
-    client: &EslClient,
-    commands: &[BatchCommand],
-    config: &AppConfig,
-) -> Result<()> {
-    let output = printer::Output::new(config.color);
-    let processor = CommandProcessor::new(&output);
-    for command in commands {
-        match command {
-            BatchCommand::Api(cmd) => {
-                processor
-                    .execute_command(client, cmd)
-                    .await?
-            }
-            BatchCommand::BgApi(cmd) => {
-                start_background_job(client, cmd, &processor, &output).await?
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Submits the job and reports its Job-UUID. Nothing here waits for the
-/// BACKGROUND_JOB event that carries the result.
-async fn start_background_job(
-    client: &EslClient,
-    command: &str,
-    processor: &CommandProcessor,
-    output: &printer::Output,
-) -> Result<()> {
-    let response = client
-        .bgapi(command)
-        .await
-        .with_context(|| format!("bgapi {}", command))?;
-    match response.into_result() {
-        Ok(accepted) => match accepted.job_uuid() {
-            Some(uuid) => output.print(format!("Job-UUID: {}", uuid)),
-            None => output.print_labeled(
-                "API Error",
-                &format!("bgapi {} was accepted without a Job-UUID", command),
-            ),
-        },
-        Err(e) => {
-            processor.handle_error(anyhow::Error::new(e).context(format!("bgapi {}", command)))
-        }
-    }
-    Ok(())
 }

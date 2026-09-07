@@ -4,6 +4,8 @@ use crate::printer::{ColorMode, LogSink, Output, Printer};
 use anyhow::{Context, Result};
 use colored::{ColoredString, Colorize};
 use freeswitch_esl_tokio::{EslEvent, EslEventType, EventHeader, HeaderLookup};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tracing::debug;
 
 pub fn is_log_event(event: &EslEvent) -> bool {
@@ -59,6 +61,7 @@ pub fn format_log_line(event: &EslEvent, color: ColorMode) -> Option<String> {
 pub struct LogDestination {
     printer: Printer,
     color: ColorMode,
+    broken: Arc<AtomicBool>,
 }
 
 impl LogDestination {
@@ -74,9 +77,11 @@ impl LogDestination {
                 .with_context(|| format!("cannot open log destination {}", spec))?;
             (LogSink::file(file), ColorMode::Never)
         };
+        let broken = sink.broken_flag();
         Ok(Self {
             printer: Printer::with_external(sink),
             color,
+            broken,
         })
     }
 
@@ -86,6 +91,12 @@ impl LogDestination {
             self.printer
                 .print(line);
         }
+    }
+
+    /// True once a write failed; the run ends instead of retrying every line.
+    pub fn is_broken(&self) -> bool {
+        self.broken
+            .load(Ordering::Relaxed)
     }
 }
 
