@@ -1,6 +1,7 @@
 //! Interactive session management
 //!
 //! Owns the main select! loop, event consumer task, and reconnection logic.
+// qual:allow(srp, file_length=370) reason: "one session lifecycle, well under the project's 2000-line cap"
 
 use crate::channel_info::ChannelProvider;
 use crate::client_command::{ClientCommand, ParseError};
@@ -36,6 +37,7 @@ type SavedTerminal = Option<libc::termios>;
 #[cfg(not(unix))]
 type SavedTerminal = ();
 
+// qual:allow(complexity, unsafe) reason: "tcgetattr has no safe form"
 #[cfg(unix)]
 fn save_terminal_state() -> SavedTerminal {
     use std::mem::MaybeUninit;

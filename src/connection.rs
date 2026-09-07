@@ -70,6 +70,7 @@ pub(crate) async fn connect_to_freeswitch_with_retry(
 
 /// Check if error indicates connection loss
 pub(crate) fn is_connection_error(error: &anyhow::Error) -> bool {
+    // qual:allow(coupling, deh) reason: "classifying EslError is what this asks"
     error
         .downcast_ref::<EslError>()
         .is_some_and(|e| e.is_connection_error())
@@ -79,6 +80,7 @@ pub(crate) fn is_connection_error(error: &anyhow::Error) -> bool {
 /// allowed to subscribe to). Used to gate the idle-liveness timer: a restricted
 /// user who can't subscribe to HEARTBEAT has no idle traffic source.
 pub(crate) fn is_permission_denied(error: &anyhow::Error) -> bool {
+    // qual:allow(coupling, deh) reason: "classifying EslError is what this asks"
     error
         .downcast_ref::<EslError>()
         .is_some_and(|e| e.is_permission_denied())
@@ -146,7 +148,10 @@ fn print_io_hint(io_err: &std::io::Error, config: &AppConfig) {
     }
 }
 
+/// Turning a connection failure into advice the user can act on is this
+/// module's job, so it inspects the error itself rather than passing it up.
 pub(crate) fn print_connect_error(e: &anyhow::Error, config: &AppConfig) {
+    // qual:allow(coupling, deh) reason: "the failure hint is built from the error"
     if let Some(EslError::AuthenticationFailed { reason }) = e.downcast_ref::<EslError>() {
         eprintln!("Authentication failed: {}", reason);
         return;
@@ -157,6 +162,7 @@ pub(crate) fn print_connect_error(e: &anyhow::Error, config: &AppConfig) {
         format_host_port(&config.host, config.port)
     );
 
+    // qual:allow(coupling, deh) reason: "the failure hint is built from the error"
     if let Some(esl_err) = e.downcast_ref::<EslError>() {
         match esl_err {
             EslError::Io(io_err) => print_io_hint(io_err, config),
@@ -165,6 +171,7 @@ pub(crate) fn print_connect_error(e: &anyhow::Error, config: &AppConfig) {
             }
             _ => eprintln!("Error: {}", esl_err),
         }
+    // qual:allow(coupling, deh) reason: "the failure hint is built from the error"
     } else if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
         print_io_hint(io_err, config);
     } else {
