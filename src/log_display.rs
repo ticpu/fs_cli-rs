@@ -58,7 +58,7 @@ fn colorize_by_level(text: &str, log_level: u32) -> ColoredString {
         3 => text.red(),    // ERR
         4 => text.yellow(), // WARNING
         5 => text.cyan(),   // NOTICE
-        6 => text.green(),  // INFO - green like real fs_cli
+        6 => text.green(),  // INFO
         _ => text
             .yellow()
             .dimmed(), // DEBUG and higher

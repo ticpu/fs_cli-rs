@@ -128,8 +128,6 @@ impl Args {
     }
 
     /// Apply CLI argument overrides to an already-loaded AppConfig.
-    ///
-    /// Called by `parse_and_merge`; also directly usable in tests without clap parsing.
     pub fn apply_to(&self, config: &mut AppConfig) -> Result<()> {
         if let Some(host) = &self.host {
             config.host = host.clone();
