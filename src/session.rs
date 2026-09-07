@@ -24,7 +24,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use freeswitch_esl_tokio::{
-    ConnectionStatus, EslClient, EslEventStream, EslEventType, HeaderLookup,
+    ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslEventType, HeaderLookup,
 };
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -58,12 +58,25 @@ fn restore_terminal_state(termios: &libc::termios) {
 /// Why the command loop exited
 enum SessionEnd {
     Quit,
-    /// Connection lost. A liveness timeout (heartbeats stopped on a connection
-    /// that had them) arrives here too, via `DisconnectReason::HeartbeatExpired`
-    /// stringified into the reason — treated like any disconnect, so it honors
-    /// `--reconnect`. Liveness is only ever enabled when a HEARTBEAT
-    /// subscription succeeded, so a timeout means a genuinely stalled socket.
-    Disconnected(Option<String>),
+    Disconnected(DisconnectCause),
+}
+
+/// What told us the connection was gone. A liveness timeout arrives as
+/// `HeartbeatExpired`, and is honoured like any other disconnect.
+enum DisconnectCause {
+    Status(DisconnectReason),
+    Command(anyhow::Error),
+    Unknown,
+}
+
+impl std::fmt::Display for DisconnectCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisconnectCause::Status(reason) => write!(f, "{}", reason),
+            DisconnectCause::Command(e) => write!(f, "{:#}", e),
+            DisconnectCause::Unknown => write!(f, "reason unknown"),
+        }
+    }
 }
 
 /// Run interactive CLI mode with reconnection support
@@ -135,18 +148,11 @@ pub async fn run_interactive_mode(
                     .ok();
                 break Ok(());
             }
-            SessionEnd::Disconnected(reason) => {
+            SessionEnd::Disconnected(cause) => {
                 if !config.reconnect {
-                    let msg = match &reason {
-                        Some(r) => format!("Connection to FreeSWITCH lost: {}", r),
-                        None => "Connection to FreeSWITCH lost".to_string(),
-                    };
-                    break Err(anyhow::anyhow!(msg));
+                    break Err(anyhow::anyhow!("Connection to FreeSWITCH lost: {}", cause));
                 }
-                match &reason {
-                    Some(r) => warn!("Connection lost ({}), reconnecting...", r),
-                    None => warn!("Connection lost, reconnecting..."),
-                }
+                warn!("Connection lost ({}), reconnecting...", cause);
                 let (new_client, new_events) = connect_retry_forever(config).await;
                 info!("Reconnected successfully");
                 client = new_client;
@@ -328,9 +334,9 @@ async fn run_command_loop(
                 }
                 return match client.status() {
                     ConnectionStatus::Disconnected(r) => {
-                        SessionEnd::Disconnected(Some(r.to_string()))
+                        SessionEnd::Disconnected(DisconnectCause::Status(r))
                     }
-                    _ => SessionEnd::Disconnected(None),
+                    _ => SessionEnd::Disconnected(DisconnectCause::Unknown),
                 };
             }
             Some(command) = ctx.cmd_rx.recv() => {
@@ -422,7 +428,7 @@ fn clear_terminal() {
 /// End the session on a connection error, print anything else.
 fn report_or_disconnect(processor: &CommandProcessor, e: anyhow::Error) -> Option<SessionEnd> {
     if is_connection_error(&e) {
-        return Some(SessionEnd::Disconnected(Some(e.to_string())));
+        return Some(SessionEnd::Disconnected(DisconnectCause::Command(e)));
     }
     processor.handle_error(e);
     None
