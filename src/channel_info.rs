@@ -24,6 +24,9 @@ pub struct ChannelInfo {
 #[derive(Debug, Deserialize)]
 pub struct ChannelsResponse {
     pub row_count: u32,
+    /// mod_commands answers an empty result with `{"row_count": 0}` and no
+    /// `rows` key at all.
+    #[serde(default)]
     pub rows: Vec<ChannelInfo>,
 }
 
@@ -47,25 +50,36 @@ impl ChannelProvider {
         &self,
         client: &EslClient,
     ) -> Result<Option<Vec<Completion>>> {
-        let count = self
-            .get_channel_count(client)
+        let response = self
+            .fetch_channels_json(client)
             .await?;
 
-        if count == 0 {
+        if response.row_count == 0 {
             return Ok(Some(Vec::new()));
         }
 
-        if count > self.max_channels {
+        // The count check gates the display list, not the transfer: this
+        // fetch already paid for the full row set before we know the count.
+        if response.row_count > self.max_channels {
             tracing::debug!(
                 "Too many channels ({}) for enhanced completion, limit is {}. Falling back to default.",
-                count, self.max_channels
+                response.row_count, self.max_channels
             );
             return Ok(None);
         }
 
-        let channels = self
-            .get_channels(client)
-            .await?;
+        let mut channels = response.rows;
+        channels.sort_by(|a, b| {
+            let a_epoch: u64 = a
+                .created_epoch
+                .parse()
+                .unwrap_or(0);
+            let b_epoch: u64 = b
+                .created_epoch
+                .parse()
+                .unwrap_or(0);
+            b_epoch.cmp(&a_epoch)
+        });
 
         let completions = channels
             .into_iter()
@@ -85,46 +99,39 @@ impl ChannelProvider {
         Ok(Some(completions))
     }
 
-    async fn fetch_channels_json(
-        &self,
-        client: &EslClient,
-        command: &str,
-    ) -> Result<ChannelsResponse> {
+    async fn fetch_channels_json(&self, client: &EslClient) -> Result<ChannelsResponse> {
+        const COMMAND: &str = "show channels as json";
         let response = client
-            .api(command)
+            .api(COMMAND)
             .await
-            .with_context(|| format!("ESL API call '{}' failed", command))?;
+            .with_context(|| format!("ESL API call '{}' failed", COMMAND))?;
 
         let body = response
             .api_result()
-            .with_context(|| format!("ESL command '{}' failed", command))?;
+            .with_context(|| format!("ESL command '{}' failed", COMMAND))?;
         serde_json::from_str::<ChannelsResponse>(body)
-            .with_context(|| format!("Failed to parse JSON response for '{}'", command))
+            .with_context(|| format!("Failed to parse JSON response for '{}'", COMMAND))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_result_carries_no_rows_key() {
+        let parsed: ChannelsResponse = serde_json::from_str(r#"{"row_count": 0}"#).unwrap();
+        assert_eq!(parsed.row_count, 0);
+        assert!(parsed
+            .rows
+            .is_empty());
     }
 
-    async fn get_channel_count(&self, client: &EslClient) -> Result<u32> {
-        let resp = self
-            .fetch_channels_json(client, "show channels count as json")
-            .await?;
-        Ok(resp.row_count)
-    }
-
-    async fn get_channels(&self, client: &EslClient) -> Result<Vec<ChannelInfo>> {
-        let resp = self
-            .fetch_channels_json(client, "show channels as json")
-            .await?;
-        let mut channels = resp.rows;
-        channels.sort_by(|a, b| {
-            let a_epoch: u64 = a
-                .created_epoch
-                .parse()
-                .unwrap_or(0);
-            let b_epoch: u64 = b
-                .created_epoch
-                .parse()
-                .unwrap_or(0);
-            b_epoch.cmp(&a_epoch)
-        });
-        Ok(channels)
+    #[test]
+    fn rows_deserialize_with_the_optional_caller_id_absent() {
+        let body = r#"{"row_count":1,"rows":[{"uuid":"u","created":"c","created_epoch":"1",
+                       "name":"sofia/n","state":"CS_EXECUTE"}]}"#;
+        let parsed: ChannelsResponse = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.rows[0].cid_num, "");
     }
 }
