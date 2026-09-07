@@ -1,5 +1,6 @@
 //! Readline thread and function key management
 
+use crate::client_command::ClientCommand;
 use crate::completion::{CompletionRequest, FsCliCompleter};
 use crate::config::AppConfig;
 use crate::printer::Printer;
@@ -116,6 +117,19 @@ fn setup_function_key_bindings(
     Ok(())
 }
 
+fn print_history(rl: &Editor<FsCliCompleter, FileHistory>) {
+    println!("Command History:");
+    let history = rl.history();
+    let len = history.len();
+    for (i, entry) in history
+        .iter()
+        .enumerate()
+        .skip(len.saturating_sub(20))
+    {
+        println!("  {}: {}", i + 1, entry);
+    }
+}
+
 /// Run the readline loop in a blocking thread
 pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<()> {
     let ReadlineChannels {
@@ -194,24 +208,22 @@ pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<
                     warn!("Could not add history entry: {}", e);
                 }
 
-                if matches!(line, "/quit" | "/exit" | "/bye") {
-                    println!("Goodbye!");
-                    let _ = quit_tx.send(());
-                    break;
-                }
-
-                if line == "/history" {
-                    println!("Command History:");
-                    let history = rl.history();
-                    let len = history.len();
-                    for (i, entry) in history
-                        .iter()
-                        .enumerate()
-                        .skip(len.saturating_sub(20))
-                    {
-                        println!("  {}: {}", i + 1, entry);
+                match line.parse::<ClientCommand>() {
+                    Ok(ClientCommand::Quit) => {
+                        println!("Goodbye!");
+                        if quit_tx
+                            .send(())
+                            .is_err()
+                        {
+                            warn!("Quit signal lost, session will not be told to exit");
+                        }
+                        break;
                     }
-                    continue;
+                    Ok(ClientCommand::History) => {
+                        print_history(&rl);
+                        continue;
+                    }
+                    _ => {}
                 }
 
                 if cmd_tx
@@ -227,7 +239,12 @@ pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<
             }
             Err(rustyline::error::ReadlineError::Eof) => {
                 println!("Goodbye!");
-                let _ = quit_tx.send(());
+                if quit_tx
+                    .send(())
+                    .is_err()
+                {
+                    warn!("Quit signal lost, session will not be told to exit");
+                }
                 break;
             }
             Err(e) => {

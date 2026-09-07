@@ -1,5 +1,6 @@
 //! Command processing and execution for fs_cli-rs
 
+use crate::client_command::{ClientCommand, ParseError};
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::{set_log_level, LogSetting};
 use crate::printer::Output;
@@ -183,37 +184,36 @@ impl CommandProcessor {
                 format!("handle_special_command: parts[0] = '{}'", parts[0])
             });
 
-        match parts[0]
-            .to_lowercase()
-            .as_str()
-        {
-            "/log" | "log" => {
-                self.handle_log_command(client, &parts[1..])
+        match command.parse::<ClientCommand>() {
+            Ok(ClientCommand::Log(level)) => {
+                return self
+                    .handle_log_command(client, level)
                     .await
             }
-            "uptime" => {
-                let body = self
-                    .api_body(client, "status")
-                    .await?;
-                Ok(Some(self.extract_uptime(&body)))
+            Err(ParseError::InvalidLogLevel(level)) => {
+                return Ok(Some(format!("Invalid log level: {}", level)))
             }
-            _ => Ok(None),
+            _ => {}
         }
+
+        if parts[0].eq_ignore_ascii_case("uptime") {
+            let body = self
+                .api_body(client, "status")
+                .await?;
+            return Ok(Some(self.extract_uptime(&body)));
+        }
+
+        Ok(None)
     }
 
-    /// Handle /log command with various log levels
-    async fn handle_log_command(
+    /// Handle /log command, with no level meaning "list the levels"
+    pub async fn handle_log_command(
         &self,
         client: &EslClient,
-        parts: &[&str],
+        level: Option<LogSetting>,
     ) -> Result<Option<String>> {
-        if parts.is_empty() {
+        let Some(setting) = level else {
             return Ok(Some(LogSetting::help_text()));
-        }
-
-        let setting = match parts[0].parse::<LogSetting>() {
-            Ok(setting) => setting,
-            Err(message) => return Ok(Some(message)),
         };
 
         match set_log_level(client, setting).await? {

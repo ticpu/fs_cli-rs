@@ -3,6 +3,7 @@
 //! Owns the main select! loop, event consumer task, and reconnection logic.
 
 use crate::channel_info::ChannelProvider;
+use crate::client_command::{ClientCommand, ParseError};
 use crate::commands::CommandProcessor;
 use crate::completion::CompletionRequest;
 use crate::config::AppConfig;
@@ -102,9 +103,12 @@ pub async fn run_interactive_mode(
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
 
     let mut ctx = CommandLoopCtx {
-        processor: &processor,
-        macros: &macros,
-        channel_provider: &channel_provider,
+        parts: SessionParts {
+            processor: &processor,
+            output: &output,
+            macros: &macros,
+            channel_provider: &channel_provider,
+        },
         cmd_rx: &mut chans.commands,
         quit_rx: &mut chans.quit,
         completion_rx: &mut chans.completions,
@@ -294,10 +298,15 @@ fn spawn_event_consumer(
 /// Per-connection resources (`client`, `event_task`) are passed separately to
 /// `run_command_loop` so they can be swapped on reconnect without rebuilding
 /// this struct.
-struct CommandLoopCtx<'a> {
+struct SessionParts<'a> {
     processor: &'a CommandProcessor,
+    output: &'a Output,
     macros: &'a HashMap<String, String>,
     channel_provider: &'a ChannelProvider,
+}
+
+struct CommandLoopCtx<'a> {
+    parts: SessionParts<'a>,
     cmd_rx: &'a mut mpsc::UnboundedReceiver<String>,
     quit_rx: &'a mut oneshot::Receiver<()>,
     completion_rx: &'a mut mpsc::UnboundedReceiver<CompletionRequest>,
@@ -325,13 +334,13 @@ async fn run_command_loop(
                 };
             }
             Some(command) = ctx.cmd_rx.recv() => {
-                if let Some(end) = handle_command_line(ctx.processor, ctx.macros, client, command).await {
+                if let Some(end) = handle_command_line(&ctx.parts, client, command).await {
                     return end;
                 }
             }
             Some(request) = ctx.completion_rx.recv() => {
                 let completions =
-                    get_console_complete(client, &request, ctx.channel_provider).await;
+                    get_console_complete(client, &request, ctx.parts.channel_provider).await;
                 if let Err(e) = request.response_tx.send(completions) {
                     debug!("completion reply dropped for {:?}: {}", request.line, e);
                 }
@@ -346,55 +355,75 @@ async fn run_command_loop(
 /// Dispatch one line from the readline thread. Returns `Some(end)` if the
 /// session should terminate, `None` to continue.
 async fn handle_command_line(
-    processor: &CommandProcessor,
-    macros: &HashMap<String, String>,
+    parts: &SessionParts<'_>,
     client: &EslClient,
     command: String,
 ) -> Option<SessionEnd> {
-    if command.starts_with('/') {
-        return match command.as_str() {
-            "/help" => {
-                processor.show_help(macros);
+    match command.parse::<ClientCommand>() {
+        Ok(ClientCommand::Help) => {
+            parts
+                .processor
+                .show_help(parts.macros);
+            None
+        }
+        Ok(ClientCommand::Clear) => {
+            clear_terminal();
+            None
+        }
+        // Both run on the readline thread, which owns the history and the quit
+        // signal; they only reach here if that parse and this one disagree.
+        Ok(ClientCommand::History) | Ok(ClientCommand::Quit) => None,
+        Ok(ClientCommand::Log(level)) => match parts
+            .processor
+            .handle_log_command(client, level)
+            .await
+        {
+            Ok(Some(message)) => {
+                parts
+                    .output
+                    .print(message);
                 None
             }
-            "/clear" => {
-                let mut stdout = io::stdout();
-                let result: io::Result<()> = (|| {
-                    stdout.execute(Clear(ClearType::All))?;
-                    stdout.execute(MoveTo(0, 0))?;
-                    stdout.flush()
-                })();
-                if let Err(e) = result {
-                    warn!("Failed to clear terminal: {}", e);
-                }
-                None
+            Ok(None) => None,
+            Err(e) => report_or_disconnect(parts.processor, e),
+        },
+        Err(ParseError::InvalidLogLevel(level)) => {
+            parts
+                .output
+                .print(format!("Invalid log level: {}", level));
+            None
+        }
+        Err(ParseError::NotClientCommand) => {
+            let effective = parse_function_key(&command, parts.macros).unwrap_or(command);
+            if let Err(e) = parts
+                .processor
+                .execute_command(client, &effective)
+                .await
+            {
+                return report_or_disconnect(parts.processor, e);
             }
-            _ => execute_with_disconnect_check(client, processor, &command).await,
-        };
+            None
+        }
     }
-    if command == "help" {
-        processor.show_help(macros);
-        return None;
-    }
-    let effective = parse_function_key(&command, macros).unwrap_or(command);
-    execute_with_disconnect_check(client, processor, &effective).await
 }
 
-/// Execute a command and check for connection errors.
-/// Returns Some(SessionEnd) if the session should end, None to continue.
-async fn execute_with_disconnect_check(
-    client: &EslClient,
-    processor: &CommandProcessor,
-    command: &str,
-) -> Option<SessionEnd> {
-    if let Err(e) = processor
-        .execute_command(client, command)
-        .await
-    {
-        if is_connection_error(&e) {
-            return Some(SessionEnd::Disconnected(Some(e.to_string())));
-        }
-        processor.handle_error(e);
+fn clear_terminal() {
+    let mut stdout = io::stdout();
+    let result: io::Result<()> = (|| {
+        stdout.execute(Clear(ClearType::All))?;
+        stdout.execute(MoveTo(0, 0))?;
+        stdout.flush()
+    })();
+    if let Err(e) = result {
+        warn!("Failed to clear terminal: {}", e);
     }
+}
+
+/// End the session on a connection error, print anything else.
+fn report_or_disconnect(processor: &CommandProcessor, e: anyhow::Error) -> Option<SessionEnd> {
+    if is_connection_error(&e) {
+        return Some(SessionEnd::Disconnected(Some(e.to_string())));
+    }
+    processor.handle_error(e);
     None
 }

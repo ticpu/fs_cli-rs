@@ -6,6 +6,7 @@ use tracing::info;
 
 mod args;
 mod channel_info;
+mod client_command;
 mod commands;
 mod completion;
 mod config;
