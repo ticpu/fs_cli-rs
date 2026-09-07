@@ -9,6 +9,17 @@ use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError};
 use std::collections::HashMap;
 use tracing::trace;
 
+/// Label and text for a refused command, or None when the failure carries no
+/// text to frame. An unprefixed reply keeps all of it: the switch answers
+/// several `uuid_*` APIs with a bare `-ERROR`.
+fn frame_failure<'a>(failure: &CommandFailure<'a>) -> Option<(&'static str, &'a str)> {
+    match failure {
+        CommandFailure::Usage(text) => Some(("Usage", text)),
+        CommandFailure::Err(text) | CommandFailure::Unprefixed(text) => Some(("API Error", text)),
+        _ => None,
+    }
+}
+
 /// Command processor for FreeSWITCH CLI commands
 pub struct CommandProcessor {
     output: Output,
@@ -87,14 +98,14 @@ impl CommandProcessor {
                 if esl.is_some_and(EslError::is_connection_error) {
                     return Err(e);
                 }
-                match esl.and_then(EslError::command_failure) {
-                    Some(CommandFailure::Err(text) | CommandFailure::Unprefixed(text)) => self
+                match esl
+                    .and_then(EslError::command_failure)
+                    .and_then(|f| frame_failure(&f))
+                {
+                    Some((label, text)) => self
                         .output
-                        .print_labeled("API Error", text),
-                    Some(CommandFailure::Usage(text)) => self
-                        .output
-                        .print_labeled("Usage", text),
-                    _ => self
+                        .print_labeled(label, text),
+                    None => self
                         .output
                         .print_labeled_error("API Error", &e),
                 }
@@ -229,5 +240,47 @@ Use Tab for command completion and Up/Down arrows for history.
             .output
             .colorize(&help_text, |s| s.cyan());
         self.print_message(&formatted_help);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failure_of(reply_text: &str) -> EslError {
+        EslError::CommandFailed {
+            reply_text: reply_text.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_bare_error_reply_keeps_its_whole_text() {
+        let err = failure_of("-ERROR");
+        let failure = err
+            .command_failure()
+            .unwrap();
+        assert_eq!(frame_failure(&failure), Some(("API Error", "-ERROR")));
+    }
+
+    #[test]
+    fn err_and_usage_replies_are_peeled_and_labeled() {
+        let err = failure_of("-ERR no such channel");
+        assert_eq!(
+            frame_failure(
+                &err.command_failure()
+                    .unwrap()
+            ),
+            Some(("API Error", "no such channel"))
+        );
+
+        let usage = failure_of("-USAGE: <uuid>");
+        assert_eq!(
+            frame_failure(
+                &usage
+                    .command_failure()
+                    .unwrap()
+            ),
+            Some(("Usage", "<uuid>"))
+        );
     }
 }
