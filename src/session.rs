@@ -407,3 +407,33 @@ fn report_or_disconnect(processor: &CommandProcessor, e: anyhow::Error) -> Optio
     processor.handle_error(e);
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_disconnected_client_names_the_reason() {
+        let cause = classify_event_task_exit(ConnectionStatus::Disconnected(
+            DisconnectReason::ConnectionClosed,
+        ));
+        assert_eq!(cause.to_string(), "connection closed");
+        assert!(matches!(cause, DisconnectCause::Status(_)));
+    }
+
+    /// The consumer task can only end with the stream, so a client that still
+    /// reports Connected has nothing to tell the user beyond that.
+    #[test]
+    fn a_still_connected_client_falls_back_to_unknown() {
+        let cause = classify_event_task_exit(ConnectionStatus::Connected);
+        assert!(matches!(cause, DisconnectCause::Unknown));
+        assert_eq!(cause.to_string(), "reason unknown");
+    }
+
+    #[test]
+    fn a_command_error_keeps_its_context_chain() {
+        let inner = anyhow::anyhow!("socket is gone");
+        let cause = DisconnectCause::Command(inner.context("api status failed"));
+        assert_eq!(cause.to_string(), "api status failed: socket is gone");
+    }
+}

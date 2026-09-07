@@ -309,3 +309,76 @@ pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProfileConfig;
+
+    fn config_with_host(host: &str) -> AppConfig {
+        let mut config = ProfileConfig::default().into_app_config();
+        config.host = host.to_string();
+        config
+    }
+
+    #[test]
+    fn blank_lines_are_never_dispatched() {
+        assert_eq!(classify_line(""), LineOutcome::Ignore);
+        assert_eq!(classify_line("   \t "), LineOutcome::Ignore);
+    }
+
+    #[test]
+    fn quit_and_history_stay_on_this_thread() {
+        assert_eq!(classify_line("/quit"), LineOutcome::Quit);
+        assert_eq!(classify_line("/history"), LineOutcome::ShowHistory);
+    }
+
+    #[test]
+    fn anything_else_is_sent_trimmed() {
+        assert_eq!(
+            classify_line("  show channels  "),
+            LineOutcome::Send("show channels".to_string())
+        );
+        assert_eq!(
+            classify_line("/log debug"),
+            LineOutcome::Send("/log debug".to_string())
+        );
+    }
+
+    #[test]
+    fn the_prompt_carries_the_remote_host() {
+        assert_eq!(
+            build_prompt(&config_with_host("fs1.example.test")),
+            "freeswitch@fs1.example.test> "
+        );
+    }
+
+    /// A local session shows this machine's name, not the literal "localhost".
+    #[test]
+    fn a_local_prompt_uses_the_hostname() {
+        let prompt = build_prompt(&config_with_host("localhost"));
+        assert!(!prompt.contains("localhost"), "got {:?}", prompt);
+        assert!(prompt.starts_with("freeswitch@"));
+    }
+
+    #[test]
+    fn a_configured_history_file_is_used_verbatim() {
+        let mut config = config_with_host("localhost");
+        config.history_file = Some(PathBuf::from("/nonexistent/fs_cli_history"));
+        assert_eq!(
+            resolve_history_file(&config),
+            PathBuf::from("/nonexistent/fs_cli_history")
+        );
+    }
+
+    #[test]
+    fn the_default_history_file_is_dot_prefixed() {
+        let config = config_with_host("localhost");
+        let path = resolve_history_file(&config);
+        assert_eq!(
+            path.file_name()
+                .and_then(|n| n.to_str()),
+            Some(".fs_cli_history")
+        );
+    }
+}
