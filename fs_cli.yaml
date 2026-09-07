@@ -1,3 +1,4 @@
+# --log-file and --job-timeout are command-line only and have no profile key.
 fs_cli:
   default:
     host: localhost
