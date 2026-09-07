@@ -122,6 +122,9 @@ fn setup_function_key_bindings(
     Ok(())
 }
 
+/// How many trailing history entries `/history` prints.
+const HISTORY_DISPLAY_COUNT: usize = 20;
+
 fn print_history(rl: &Editor<FsCliCompleter, FileHistory>) {
     println!("Command History:");
     let history = rl.history();
@@ -129,7 +132,7 @@ fn print_history(rl: &Editor<FsCliCompleter, FileHistory>) {
     for (i, entry) in history
         .iter()
         .enumerate()
-        .skip(len.saturating_sub(20))
+        .skip(len.saturating_sub(HISTORY_DISPLAY_COUNT))
     {
         println!("  {}: {}", i + 1, entry);
     }
