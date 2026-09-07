@@ -1,10 +1,38 @@
 //! Shared printer for coordinated terminal output.
 
-use crate::commands::ColorMode;
 use colored::{ColoredString, Colorize};
 use rustyline::ExternalPrinter;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, Mutex};
 use tracing::warn;
+
+/// Color mode for log display
+#[derive(Debug, Clone, Copy, PartialEq, strum::EnumString, strum::Display)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+pub enum ColorMode {
+    Never,
+    Tag,
+    Line,
+}
+
+impl Serialize for ColorMode {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ColorMode {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        raw.parse()
+            .map_err(|_| {
+                serde::de::Error::custom(format!(
+                    "Invalid color mode: {}. Valid options: never, tag, line",
+                    raw
+                ))
+            })
+    }
+}
 
 /// Coordinated terminal printer. Clone is cheap (inner Arc clone).
 #[derive(Clone)]

@@ -1,9 +1,9 @@
 //! Command-line argument parsing for fs_cli-rs
 
-use crate::commands::ColorMode;
 use crate::config::{AppConfig, FsCliConfig, ProfileConfig};
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::LogSetting;
+use crate::printer::ColorMode;
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
@@ -142,7 +142,7 @@ impl Args {
             config.user = Some(user.clone());
         }
         if let Some(debug) = self.debug {
-            config.debug = EslDebugLevel::from_u8(debug)?;
+            config.debug = EslDebugLevel::try_from(debug)?;
         }
         if let Some(color) = self.color {
             config.color = color;
@@ -178,10 +178,10 @@ impl Args {
 #[cfg(test)]
 mod tests {
     use super::Args;
-    use crate::commands::ColorMode;
     use crate::config::AppConfig;
     use crate::esl_debug::EslDebugLevel;
     use crate::log_level::LogSetting;
+    use crate::printer::ColorMode;
     use freeswitch_esl_tokio::LogLevel;
     use std::collections::HashMap;
 

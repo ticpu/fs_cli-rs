@@ -12,7 +12,7 @@ use crate::connection::{
     subscribe_heartbeat, subscribe_to_events,
 };
 use crate::console_complete::get_console_complete;
-use crate::esl_debug::EslDebugLevel;
+
 use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::{Output, Printer};
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, ReadlineChannels};
@@ -31,7 +31,7 @@ use std::io::{self, Write};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -111,7 +111,7 @@ pub async fn run_interactive_mode(
         }
     };
     output.set_printer(printer);
-    let processor = CommandProcessor::new(&output, config.debug);
+    let processor = CommandProcessor::new(&output);
 
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
 
@@ -129,7 +129,7 @@ pub async fn run_interactive_mode(
 
     // Reconnection loop — each iteration is one connection session
     let session_result = loop {
-        let mut event_task = spawn_event_consumer(events, &output, config.debug);
+        let mut event_task = spawn_event_consumer(events, &output);
 
         let result = run_command_loop(&client, &mut ctx, &mut event_task).await;
 
@@ -263,11 +263,7 @@ fn format_channel_event(event: &freeswitch_esl_tokio::EslEvent, output: &Output)
 }
 
 /// Spawn a task that consumes events and displays log/channel messages
-fn spawn_event_consumer(
-    mut events: EslEventStream,
-    output: &Output,
-    debug_level: EslDebugLevel,
-) -> JoinHandle<()> {
+fn spawn_event_consumer(mut events: EslEventStream, output: &Output) -> JoinHandle<()> {
     let output = output.clone();
     tokio::spawn(async move {
         while let Some(result) = events
@@ -281,9 +277,7 @@ fn spawn_event_consumer(
                             "Event body contained invalid UTF-8 ({} bytes), shown with \u{FFFD} replacements",
                             raw.len()
                         );
-                        if debug_level >= EslDebugLevel::Debug5 {
-                            debug!("Non-UTF-8 body bytes: {}", raw.escape_ascii());
-                        }
+                        trace!("Non-UTF-8 body bytes: {}", raw.escape_ascii());
                     }
                     if let Some(msg) = format_channel_event(&event, &output) {
                         output.print(msg);

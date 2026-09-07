@@ -1,8 +1,8 @@
 //! Configuration management for fs_cli-rs
 
-use crate::commands::ColorMode;
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::LogSetting;
+use crate::printer::ColorMode;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -268,7 +268,7 @@ fs_cli:
         let profile = config
             .get_profile("p1")
             .unwrap();
-        assert_eq!(profile.color, crate::commands::ColorMode::Tag);
+        assert_eq!(profile.color, ColorMode::Tag);
         assert_eq!(
             profile.log_level,
             LogSetting::Level(freeswitch_esl_tokio::LogLevel::Warning)
@@ -280,7 +280,7 @@ fs_cli:
         );
 
         let app = profile.into_app_config();
-        assert_eq!(app.color, crate::commands::ColorMode::Tag);
+        assert_eq!(app.color, ColorMode::Tag);
         assert_eq!(
             app.log_level,
             LogSetting::Level(freeswitch_esl_tokio::LogLevel::Warning)
@@ -327,7 +327,7 @@ fs_cli:
         let profile = reparsed
             .get_profile("default")
             .unwrap();
-        assert_eq!(profile.color, crate::commands::ColorMode::Line);
+        assert_eq!(profile.color, ColorMode::Line);
         assert_eq!(
             profile.log_level,
             LogSetting::Level(freeswitch_esl_tokio::LogLevel::Debug)

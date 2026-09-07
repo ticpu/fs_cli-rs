@@ -1,79 +1,24 @@
 //! Command processing and execution for fs_cli-rs
 
 use crate::client_command::{ClientCommand, ParseError};
-use crate::esl_debug::EslDebugLevel;
 use crate::log_level::{set_log_level, LogSetting};
 use crate::printer::Output;
 use anyhow::{Error, Result};
 use colored::*;
 use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::str::FromStr;
-
-/// Color mode for log display
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColorMode {
-    Never,
-    Tag,
-    Line,
-}
-
-impl FromStr for ColorMode {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, String> {
-        match s
-            .to_lowercase()
-            .as_str()
-        {
-            "never" => Ok(ColorMode::Never),
-            "tag" => Ok(ColorMode::Tag),
-            "line" => Ok(ColorMode::Line),
-            _ => Err(format!(
-                "Invalid color mode: {}. Valid options: never, tag, line",
-                s
-            )),
-        }
-    }
-}
-
-impl std::fmt::Display for ColorMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ColorMode::Never => write!(f, "never"),
-            ColorMode::Tag => write!(f, "tag"),
-            ColorMode::Line => write!(f, "line"),
-        }
-    }
-}
-
-impl Serialize for ColorMode {
-    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for ColorMode {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        String::deserialize(d)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
+use tracing::trace;
 
 /// Command processor for FreeSWITCH CLI commands
 pub struct CommandProcessor {
     output: Output,
-    debug_level: EslDebugLevel,
 }
 
 impl CommandProcessor {
     /// Create new command processor
-    pub fn new(output: &Output, debug_level: EslDebugLevel) -> Self {
+    pub fn new(output: &Output) -> Self {
         Self {
             output: output.clone(),
-            debug_level,
         }
     }
 
@@ -115,10 +60,7 @@ impl CommandProcessor {
 
     /// Execute a FreeSWITCH command
     pub async fn execute_command(&self, client: &EslClient, command: &str) -> Result<()> {
-        self.debug_level
-            .debug_print(EslDebugLevel::Debug5, || {
-                format!("execute_command called with: '{}'", command)
-            });
+        trace!("execute_command called with: '{}'", command);
 
         if let Some(result) = self
             .handle_special_command(client, command)
@@ -172,17 +114,11 @@ impl CommandProcessor {
             .split_whitespace()
             .collect();
         if parts.is_empty() {
-            self.debug_level
-                .debug_print(EslDebugLevel::Debug6, || {
-                    "handle_special_command: empty command".to_string()
-                });
+            trace!("handle_special_command: empty command");
             return Ok(None);
         }
 
-        self.debug_level
-            .debug_print(EslDebugLevel::Debug5, || {
-                format!("handle_special_command: parts[0] = '{}'", parts[0])
-            });
+        trace!("handle_special_command: parts[0] = '{}'", parts[0]);
 
         match command.parse::<ClientCommand>() {
             Ok(ClientCommand::Log(level)) => {

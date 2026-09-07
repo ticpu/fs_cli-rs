@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use freeswitch_esl_tokio::EslClient;
-use tracing::info;
+use tracing::{debug, info};
 
 mod args;
 mod channel_info;
@@ -31,18 +31,10 @@ async fn main() -> Result<()> {
 
     setup_logging(config.debug);
 
-    config
-        .debug
-        .debug_print(EslDebugLevel::Debug, || {
-            "About to connect to FreeSWITCH".to_string()
-        });
+    debug!("About to connect to FreeSWITCH");
     let (client, events) = match connect_to_freeswitch_with_retry(&config).await {
         Ok(pair) => {
-            config
-                .debug
-                .debug_print(EslDebugLevel::Debug, || {
-                    "Successfully connected to FreeSWITCH".to_string()
-                });
+            debug!("Successfully connected to FreeSWITCH");
             pair
         }
         Err(e) => {
@@ -61,9 +53,7 @@ async fn main() -> Result<()> {
             .disconnect()
             .await?;
     } else if let Err(e) = session::run_interactive_mode(client, events, &config).await {
-        // Event subscriptions, idle-liveness gating, and logging are set up
-        // per-connection inside run_interactive_mode (initial and reconnect).
-        eprintln!("{}", e);
+        eprintln!("{:#}", e);
         std::process::exit(1);
     }
 
@@ -87,7 +77,7 @@ async fn execute_commands(
     config: &AppConfig,
 ) -> Result<()> {
     let output = printer::Output::new(config.color);
-    let processor = CommandProcessor::new(&output, config.debug);
+    let processor = CommandProcessor::new(&output);
     for command in commands {
         processor
             .execute_command(client, command)

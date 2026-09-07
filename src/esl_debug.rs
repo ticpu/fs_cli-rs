@@ -3,68 +3,42 @@
 //! Implements debug levels similar to the original fs_cli -d option (0-7)
 //! for controlling ESL protocol message logging on the client side.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt;
-use std::str::FromStr;
+use serde::{Deserialize, Serialize};
+use strum::FromRepr;
 
 /// ESL client-side debug levels (0-7)
 /// Matches the original fs_cli esl_global_set_default_logger levels
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, FromRepr, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+#[repr(u8)]
 pub enum EslDebugLevel {
     #[default]
-    None = 0, // No debug output
-    Error = 1,   // Error messages only
-    Warning = 2, // Error and warning messages
-    Info = 3,    // Error, warning, and info messages
-    Debug = 4,   // Basic debug output
-    Debug5 = 5,  // More verbose debug
-    Debug6 = 6,  // ESL protocol messages and communication
-    Debug7 = 7,  // Maximum debug (all messages)
+    None = 0,
+    Error = 1,
+    Warning = 2,
+    Info = 3,
+    Debug = 4,
+    Debug5 = 5,
+    Debug6 = 6,
+    Debug7 = 7,
 }
 
-impl FromStr for EslDebugLevel {
-    type Err = String;
+impl TryFrom<u8> for EslDebugLevel {
+    type Error = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, String> {
-        let v: u8 = s
-            .parse()
-            .map_err(|_| format!("Invalid ESL debug level: {} (must be 0-7)", s))?;
-        Self::from_u8(v).map_err(|e| e.to_string())
+    fn try_from(value: u8) -> anyhow::Result<Self> {
+        Self::from_repr(value)
+            .ok_or_else(|| anyhow::anyhow!("Invalid ESL debug level: {} (must be 0-7)", value))
+    }
+}
+
+impl From<EslDebugLevel> for u8 {
+    fn from(level: EslDebugLevel) -> Self {
+        level as Self
     }
 }
 
 impl EslDebugLevel {
-    /// Create from u8 value (0-7)
-    pub fn from_u8(value: u8) -> anyhow::Result<Self> {
-        match value {
-            0 => Ok(EslDebugLevel::None),
-            1 => Ok(EslDebugLevel::Error),
-            2 => Ok(EslDebugLevel::Warning),
-            3 => Ok(EslDebugLevel::Info),
-            4 => Ok(EslDebugLevel::Debug),
-            5 => Ok(EslDebugLevel::Debug5),
-            6 => Ok(EslDebugLevel::Debug6),
-            7 => Ok(EslDebugLevel::Debug7),
-            _ => Err(anyhow::anyhow!(
-                "Invalid ESL debug level: {} (must be 0-7)",
-                value
-            )),
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EslDebugLevel::None => "0",
-            EslDebugLevel::Error => "1",
-            EslDebugLevel::Warning => "2",
-            EslDebugLevel::Info => "3",
-            EslDebugLevel::Debug => "4",
-            EslDebugLevel::Debug5 => "5",
-            EslDebugLevel::Debug6 => "6",
-            EslDebugLevel::Debug7 => "7",
-        }
-    }
-
     /// Get tracing filter level for this debug level
     pub fn tracing_filter(&self) -> &'static str {
         match self {
@@ -79,31 +53,5 @@ impl EslDebugLevel {
                 "fs_cli_rs=trace,freeswitch_esl_tokio=trace,rustyline=warn"
             }
         }
-    }
-
-    /// Debug print if level is high enough; `msg` is only evaluated when enabled
-    pub fn debug_print(&self, level: EslDebugLevel, msg: impl FnOnce() -> String) {
-        if *self >= level {
-            eprintln!("[ESL_DEBUG:{}] {}", level.as_str(), msg());
-        }
-    }
-}
-
-impl fmt::Display for EslDebugLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl Serialize for EslDebugLevel {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u8(*self as u8)
-    }
-}
-
-impl<'de> Deserialize<'de> for EslDebugLevel {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let v = u8::deserialize(d)?;
-        Self::from_u8(v).map_err(serde::de::Error::custom)
     }
 }

@@ -151,7 +151,7 @@ pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<
         .build();
     let mut rl = Editor::<FsCliCompleter, FileHistory>::with_config(rl_config)?;
 
-    let completer = FsCliCompleter::new(completion_tx, config.debug);
+    let completer = FsCliCompleter::new(completion_tx);
     rl.set_helper(Some(completer));
 
     setup_function_key_bindings(&mut rl, &macros)?;
