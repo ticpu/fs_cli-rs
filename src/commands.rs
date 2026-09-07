@@ -69,6 +69,7 @@ impl CommandProcessor {
     ///
     /// Transport errors and refused commands propagate as `EslError`; callers
     /// frame the latter through `EslError::command_failure`.
+    // qual:allow(srp, slm) reason: "thin wrapper pairing api call with outcome framing; another layer would not earn its place"
     async fn api_body(&self, client: &EslClient, command: &str) -> Result<String> {
         Ok(api_outcome(
             &client
@@ -103,6 +104,7 @@ impl CommandProcessor {
             }
             // Only a refused command is reported and survived. A transport
             // fault propagates, so `-x` still exits non-zero on one.
+            // qual:allow(coupling, deh) reason: "this match turns a refused command into user-facing text; handling the error here is the point"
             Err(e) => match e
                 .downcast_ref::<EslError>()
                 .and_then(EslError::command_failure)
@@ -157,6 +159,7 @@ impl CommandProcessor {
     }
 
     /// Handle /log command, with no level meaning "list the levels"
+    // qual:allow(srp, slm) reason: "small helper turning a set_log_level reply into the two lines /log can show; another layer would not earn its place"
     pub async fn handle_log_command(
         &self,
         client: &EslClient,
@@ -178,6 +181,7 @@ impl CommandProcessor {
     }
 
     /// Extract uptime information from status output
+    // qual:allow(srp, slm) reason: "small helper scanning status output for the uptime line; another layer would not earn its place"
     fn extract_uptime(&self, status_output: &str) -> String {
         for line in status_output.lines() {
             if line.contains("UP")

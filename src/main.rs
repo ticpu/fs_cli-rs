@@ -26,6 +26,7 @@ use connection::{connect_to_freeswitch_with_retry, print_connect_error};
 use esl_debug::EslDebugLevel;
 
 #[tokio::main(flavor = "current_thread")]
+// qual:allow(iosp) reason: "entry point wiring the program together; splitting it would invent indirection"
 async fn main() -> Result<()> {
     let config = Args::parse_and_merge()?;
 

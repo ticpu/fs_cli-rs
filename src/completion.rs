@@ -1,3 +1,4 @@
+// qual:allow(srp, file_length=333) reason: "project cap is 2000 lines per module"
 //! Tab completion support for fs_cli-rs
 
 use crate::log_level::LogSetting;

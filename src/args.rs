@@ -137,6 +137,7 @@ impl Args {
     }
 
     /// Apply CLI argument overrides to an already-loaded AppConfig.
+    // qual:allow(complexity, max_cyclomatic=14) reason: "flat sequence of one if-let override per CLI flag; the clearest form, splitting would scatter it"
     pub fn apply_to(&self, config: &mut AppConfig) -> Result<()> {
         if let Some(host) = &self.host {
             config.host = host.clone();

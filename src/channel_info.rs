@@ -99,6 +99,7 @@ impl ChannelProvider {
         Ok(Some(completions))
     }
 
+    // qual:allow(srp, slm) reason: "small helper pairing the ESL call with JSON parsing; another layer would not earn its place"
     async fn fetch_channels_json(&self, client: &EslClient) -> Result<ChannelsResponse> {
         const COMMAND: &str = "show channels as json";
         let response = client
