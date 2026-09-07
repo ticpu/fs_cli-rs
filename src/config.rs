@@ -6,7 +6,7 @@ use crate::printer::ColorMode;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 /// Top-level configuration structure matching the YAML format
@@ -207,55 +207,71 @@ pub struct AppConfig {
 impl FsCliConfig {
     /// Load configuration from file or create default
     pub fn load(config_path: Option<PathBuf>) -> Result<Self> {
-        let config_paths = if let Some(path) = config_path {
-            vec![path]
-        } else {
-            Self::get_default_config_paths()
-        };
+        let selected =
+            Self::select_config_path(config_path, Self::get_default_config_paths(), |path| {
+                path.exists()
+            });
 
-        // Try to load from existing config files
-        for path in &config_paths {
-            if path.exists() {
-                let content = std::fs::read_to_string(path)
-                    .with_context(|| format!("Failed to read config file {}", path.display()))?;
-                let config: Self = serde_yaml::from_str(&content)
-                    .with_context(|| format!("Failed to parse config file {}", path.display()))?;
-                return Ok(config);
+        match selected {
+            Some(path) => Self::read_file(&path),
+            None => {
+                let default_config = Self::default();
+                Self::write_default_config(&default_config);
+                Ok(default_config)
             }
         }
+    }
 
-        // No existing config found, create default
-        let default_config = Self::default();
+    /// First candidate `exists` accepts, an explicit path being the only
+    /// candidate when one is given.
+    fn select_config_path(
+        explicit: Option<PathBuf>,
+        defaults: Vec<PathBuf>,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Option<PathBuf> {
+        explicit
+            .map(|path| vec![path])
+            .unwrap_or(defaults)
+            .into_iter()
+            .find(|path| exists(path))
+    }
 
-        // Create the config file if we have a writable directory
-        if let Some(config_dir) = dirs::config_dir() {
-            let config_path = config_dir.join("fs_cli.yaml");
-            if let Some(parent) = config_path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
+    fn read_file(path: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config file {}", path.display()))?;
+        serde_yaml::from_str(&content)
+            .with_context(|| format!("Failed to parse config file {}", path.display()))
+    }
+
+    /// Best effort: an unwritable config dir must not stop a session that
+    /// already has usable defaults in hand.
+    fn write_default_config(config: &Self) {
+        let Some(config_dir) = dirs::config_dir() else {
+            warn!("No user config directory, not writing a default config");
+            return;
+        };
+
+        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+            warn!(
+                "Could not create config directory {}: {}",
+                config_dir.display(),
+                e
+            );
+        }
+
+        let path = config_dir.join("fs_cli.yaml");
+        match serde_yaml::to_string(config) {
+            Ok(yaml) => {
+                if let Err(e) = std::fs::write(&path, yaml) {
                     warn!(
-                        "Could not create config directory {}: {}",
-                        parent.display(),
+                        "Could not write default config to {}: {}",
+                        path.display(),
                         e
                     );
                 }
-                match serde_yaml::to_string(&default_config) {
-                    Ok(yaml_content) => {
-                        if let Err(e) = std::fs::write(&config_path, yaml_content) {
-                            warn!(
-                                "Could not write default config to {}: {}",
-                                config_path.display(),
-                                e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Could not serialize default config: {}", e);
-                    }
-                }
             }
+            Err(e) => warn!("Could not serialize default config: {}", e),
         }
-
-        Ok(default_config)
     }
 
     /// Get list of default configuration file paths to try
@@ -304,6 +320,70 @@ impl Default for FsCliConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn candidates() -> Vec<PathBuf> {
+        vec![
+            PathBuf::from("/home/u/.config/fs_cli.yaml"),
+            PathBuf::from("/home/u/.fs_cli.yaml"),
+            PathBuf::from("/etc/freeswitch/fs_cli.yaml"),
+        ]
+    }
+
+    #[test]
+    fn an_explicit_path_wins_over_every_default() {
+        let chosen = FsCliConfig::select_config_path(
+            Some(PathBuf::from("/srv/fs_cli.yaml")),
+            candidates(),
+            |_| true,
+        );
+        assert_eq!(chosen, Some(PathBuf::from("/srv/fs_cli.yaml")));
+    }
+
+    #[test]
+    fn a_missing_explicit_path_does_not_fall_back_to_a_default() {
+        let chosen = FsCliConfig::select_config_path(
+            Some(PathBuf::from("/srv/fs_cli.yaml")),
+            candidates(),
+            |path| path != Path::new("/srv/fs_cli.yaml"),
+        );
+        assert_eq!(chosen, None);
+    }
+
+    #[test]
+    fn the_defaults_are_tried_in_the_documented_order() {
+        for first in 0..candidates().len() {
+            let present = candidates().split_off(first);
+            let chosen = FsCliConfig::select_config_path(None, candidates(), |path| {
+                present
+                    .iter()
+                    .any(|p| p == path)
+            });
+            assert_eq!(chosen, Some(candidates()[first].clone()));
+        }
+    }
+
+    #[test]
+    fn no_candidate_present_selects_nothing() {
+        assert_eq!(
+            FsCliConfig::select_config_path(None, candidates(), |_| false),
+            None
+        );
+    }
+
+    #[test]
+    fn default_paths_end_at_the_system_wide_file() {
+        let paths = FsCliConfig::get_default_config_paths();
+        assert_eq!(
+            paths.last(),
+            Some(&PathBuf::from("/etc/freeswitch/fs_cli.yaml"))
+        );
+        assert!(paths
+            .iter()
+            .any(|p| p.ends_with(".config/fs_cli.yaml")));
+        assert!(paths
+            .iter()
+            .any(|p| p.ends_with(".fs_cli.yaml")));
+    }
 
     #[test]
     fn test_omitted_fields_take_the_defaults() {
