@@ -13,6 +13,7 @@ mod connection;
 mod console_complete;
 mod esl_debug;
 mod log_display;
+mod log_level;
 mod printer;
 mod readline;
 mod session;

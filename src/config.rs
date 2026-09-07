@@ -1,8 +1,10 @@
 //! Configuration management for fs_cli-rs
 
-use crate::commands::{ColorMode, LogLevel};
+use crate::commands::ColorMode;
 use crate::esl_debug::EslDebugLevel;
+use crate::log_level::LogSetting;
 use anyhow::{Context, Result};
+use freeswitch_esl_tokio::LogLevel;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -51,7 +53,7 @@ pub struct ProfileConfig {
     pub events: Option<bool>,
 
     /// Log level for FreeSWITCH logs
-    pub log_level: Option<LogLevel>,
+    pub log_level: Option<LogSetting>,
 
     /// Disable automatic log subscription on startup
     pub quiet: Option<bool>,
@@ -77,7 +79,7 @@ impl Default for ProfileConfig {
             retry: Some(false),
             reconnect: Some(false),
             events: Some(false),
-            log_level: Some(LogLevel::Debug),
+            log_level: Some(LogSetting::Level(LogLevel::Debug)),
             quiet: Some(false),
             macros: Some(Self::default_macros()),
             max_auto_complete_uuid: Some(32),
@@ -135,7 +137,7 @@ impl ProfileConfig {
                 .unwrap_or(false),
             log_level: self
                 .log_level
-                .unwrap_or(LogLevel::Debug),
+                .unwrap_or(LogSetting::Level(LogLevel::Debug)),
             quiet: self
                 .quiet
                 .unwrap_or(false),
@@ -165,7 +167,7 @@ pub struct AppConfig {
     pub retry: bool,
     pub reconnect: bool,
     pub events: bool,
-    pub log_level: LogLevel,
+    pub log_level: LogSetting,
     pub quiet: bool,
     pub macros: HashMap<String, String>,
     pub execute: Vec<String>,
@@ -344,7 +346,10 @@ fs_cli:
             .get_profile("p1")
             .unwrap();
         assert_eq!(profile.color, Some(crate::commands::ColorMode::Tag));
-        assert_eq!(profile.log_level, Some(crate::commands::LogLevel::Warning));
+        assert_eq!(
+            profile.log_level,
+            Some(LogSetting::Level(LogLevel::Warning))
+        );
         assert_eq!(profile.debug, Some(crate::esl_debug::EslDebugLevel::Debug5));
         assert_eq!(
             profile.history_file,
@@ -355,7 +360,7 @@ fs_cli:
             .to_app_config()
             .unwrap();
         assert_eq!(app.color, crate::commands::ColorMode::Tag);
-        assert_eq!(app.log_level, crate::commands::LogLevel::Warning);
+        assert_eq!(app.log_level, LogSetting::Level(LogLevel::Warning));
         assert_eq!(app.debug, crate::esl_debug::EslDebugLevel::Debug5);
         assert_eq!(
             app.history_file,
@@ -399,7 +404,7 @@ fs_cli:
             .get_profile("default")
             .unwrap();
         assert_eq!(profile.color, Some(crate::commands::ColorMode::Line));
-        assert_eq!(profile.log_level, Some(crate::commands::LogLevel::Debug));
+        assert_eq!(profile.log_level, Some(LogSetting::Level(LogLevel::Debug)));
         assert_eq!(profile.debug, Some(crate::esl_debug::EslDebugLevel::None));
     }
 }

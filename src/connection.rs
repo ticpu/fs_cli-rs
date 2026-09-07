@@ -109,10 +109,10 @@ pub(crate) async fn subscribe_heartbeat(client: &EslClient) -> Result<()> {
 /// Enable logging at the specified level
 pub(crate) async fn enable_logging(
     client: &EslClient,
-    log_level: crate::commands::LogLevel,
+    log_level: crate::log_level::LogSetting,
 ) -> Result<()> {
-    info!("Enabling logging at level: {}", log_level.as_str());
-    if let Some(reply) = crate::commands::set_log_level(client, log_level).await? {
+    info!("Enabling logging at level: {}", log_level);
+    if let Some(reply) = crate::log_level::set_log_level(client, log_level).await? {
         warn!("Failed to set log level: {}", reply);
     }
     Ok(())

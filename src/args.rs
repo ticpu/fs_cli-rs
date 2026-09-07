@@ -1,8 +1,9 @@
 //! Command-line argument parsing for fs_cli-rs
 
-use crate::commands::{ColorMode, LogLevel};
+use crate::commands::ColorMode;
 use crate::config::{AppConfig, FsCliConfig, ProfileConfig};
 use crate::esl_debug::EslDebugLevel;
+use crate::log_level::LogSetting;
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
@@ -65,7 +66,7 @@ pub struct Args {
 
     /// Log level for FreeSWITCH logs
     #[arg(short = 'l', long)]
-    pub log_level: Option<LogLevel>,
+    pub log_level: Option<LogSetting>,
 
     /// Disable automatic log subscription on startup
     #[arg(short = 'q', long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
@@ -179,9 +180,11 @@ impl Args {
 #[cfg(test)]
 mod tests {
     use super::Args;
-    use crate::commands::{ColorMode, LogLevel};
+    use crate::commands::ColorMode;
     use crate::config::AppConfig;
     use crate::esl_debug::EslDebugLevel;
+    use crate::log_level::LogSetting;
+    use freeswitch_esl_tokio::LogLevel;
     use std::collections::HashMap;
 
     fn make_args_no_overrides() -> Args {
@@ -219,7 +222,7 @@ mod tests {
             retry: true,
             reconnect: true,
             events: true,
-            log_level: LogLevel::Debug,
+            log_level: LogSetting::Level(LogLevel::Debug),
             quiet: true,
             macros: HashMap::new(),
             execute: Vec::new(),

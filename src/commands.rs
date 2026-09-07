@@ -1,6 +1,7 @@
 //! Command processing and execution for fs_cli-rs
 
 use crate::esl_debug::EslDebugLevel;
+use crate::log_level::{set_log_level, LogSetting};
 use crate::printer::Printer;
 use anyhow::{anyhow, Error, Result};
 use colored::*;
@@ -57,102 +58,6 @@ impl<'de> Deserialize<'de> for ColorMode {
         String::deserialize(d)?
             .parse()
             .map_err(serde::de::Error::custom)
-    }
-}
-
-/// FreeSWITCH log levels
-#[derive(
-    Debug, Clone, Copy, PartialEq, strum::EnumString, strum::IntoStaticStr, strum::EnumIter,
-)]
-#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
-#[repr(u8)]
-pub enum LogLevel {
-    Console = 0,
-    Alert = 1,
-    Crit = 2,
-    #[strum(serialize = "error")]
-    Err = 3,
-    #[strum(serialize = "warn")]
-    Warning = 4,
-    Notice = 5,
-    Info = 6,
-    Debug = 7,
-    Debug1 = 8,
-    Debug2 = 9,
-    Debug3 = 10,
-    Debug4 = 11,
-    Debug5 = 12,
-    Debug6 = 13,
-    Debug7 = 14,
-    Debug8 = 15,
-    Debug9 = 16,
-    Debug10 = 17,
-    NoLog = 18,
-}
-
-impl LogLevel {
-    /// Convert log level to the level string for FreeSWITCH command
-    pub fn as_str(&self) -> &'static str {
-        self.into()
-    }
-
-    /// Get all available log levels for help text
-    pub fn all_variants() -> &'static [LogLevel] {
-        use strum::IntoEnumIterator;
-        static VARIANTS: std::sync::OnceLock<Vec<LogLevel>> = std::sync::OnceLock::new();
-        VARIANTS.get_or_init(|| LogLevel::iter().collect())
-    }
-
-    /// Get help text with all available levels
-    pub fn help_text() -> String {
-        let levels: Vec<&str> = Self::all_variants()
-            .iter()
-            .map(|l| l.as_str())
-            .collect();
-        format!(
-            "Usage: /log <level>\nAvailable levels: {}",
-            levels.join(", ")
-        )
-    }
-}
-
-impl Serialize for LogLevel {
-    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for LogLevel {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
-        String::deserialize(d)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-/// Send a log-level command to FreeSWITCH.
-///
-/// Returns `Ok(None)` on server success, `Ok(Some(reply))` when the server
-/// rejects the request, `Err` on transport failure.
-pub async fn set_log_level(client: &EslClient, level: LogLevel) -> Result<Option<String>> {
-    let response = if level == LogLevel::NoLog {
-        client
-            .nolog()
-            .await?
-    } else {
-        client
-            .log(level.as_str())
-            .await?
-    };
-    if response.is_success() {
-        Ok(None)
-    } else {
-        Ok(Some(
-            response
-                .reply_text()
-                .unwrap_or("Unknown error")
-                .to_string(),
-        ))
     }
 }
 
@@ -337,22 +242,21 @@ impl CommandProcessor {
         parts: &[&str],
     ) -> Result<Option<String>> {
         if parts.is_empty() {
-            return Ok(Some(LogLevel::help_text()));
+            return Ok(Some(LogSetting::help_text()));
         }
 
-        let log_level = match parts[0].parse::<LogLevel>() {
-            Ok(level) => level,
-            Err(_) => {
-                return Ok(Some(format!("Invalid log level: {}", parts[0])));
-            }
+        let setting = match parts[0].parse::<LogSetting>() {
+            Ok(setting) => setting,
+            Err(message) => return Ok(Some(message)),
         };
 
-        match set_log_level(client, log_level).await? {
-            None => Ok(Some(format!(
-                "+OK log level {} [{}]",
-                log_level.as_str(),
-                log_level as u8
-            ))),
+        match set_log_level(client, setting).await? {
+            None => Ok(Some(match setting {
+                LogSetting::Level(level) => {
+                    format!("+OK log level {} [{}]", level, level.as_number())
+                }
+                LogSetting::NoLog => "+OK log level nolog".to_string(),
+            })),
             Some(reply) => Ok(Some(format!("Failed to set log level: {}", reply))),
         }
     }
@@ -428,52 +332,5 @@ Use Tab for command completion and Up/Down arrows for history.
             help_text
         };
         self.print_message(&formatted_help);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn log_level_parse_all_valid() {
-        for level in LogLevel::all_variants() {
-            let parsed: Result<LogLevel, _> = level
-                .as_str()
-                .parse();
-            assert!(parsed.is_ok(), "failed to parse '{}'", level.as_str());
-            assert_eq!(parsed.unwrap(), *level);
-        }
-    }
-
-    #[test]
-    fn log_level_parse_invalid_returns_error() {
-        let result: Result<LogLevel, _> = "hello".parse();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn log_level_parse_case_insensitive() {
-        let result: Result<LogLevel, _> = "DEBUG".parse();
-        assert_eq!(result.unwrap(), LogLevel::Debug);
-    }
-
-    #[test]
-    fn log_level_parse_aliases() {
-        let err: Result<LogLevel, _> = "error".parse();
-        assert_eq!(err.unwrap(), LogLevel::Err);
-        let warn: Result<LogLevel, _> = "warn".parse();
-        assert_eq!(warn.unwrap(), LogLevel::Warning);
-    }
-
-    #[test]
-    fn log_level_as_u8_discriminants() {
-        assert_eq!(LogLevel::Console as u8, 0);
-        assert_eq!(LogLevel::Alert as u8, 1);
-        assert_eq!(LogLevel::Crit as u8, 2);
-        assert_eq!(LogLevel::Err as u8, 3);
-        assert_eq!(LogLevel::Warning as u8, 4);
-        assert_eq!(LogLevel::Debug as u8, 7);
-        assert_eq!(LogLevel::NoLog as u8, 18);
     }
 }
