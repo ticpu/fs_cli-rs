@@ -44,7 +44,8 @@ impl FromStr for LogSetting {
             return Ok(LogSetting::NoLog);
         }
         if let Ok(n) = lowered.parse::<i8>() {
-            return (0..=7)
+            const MAX_LOG_LEVEL: i8 = 7; // DEBUG, the switch's most verbose level
+            return (0..=MAX_LOG_LEVEL)
                 .contains(&n)
                 .then(|| LogLevel::from_number(n))
                 .flatten()

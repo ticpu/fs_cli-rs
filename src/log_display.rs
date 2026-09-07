@@ -11,6 +11,9 @@ pub fn is_log_event(event: &EslEvent) -> bool {
         .is_some_and(|ct| ct.eq_ignore_ascii_case("log/data"))
 }
 
+/// FreeSWITCH's numeric DEBUG level, assumed when Log-Level is missing or unparseable.
+const DEFAULT_LOG_LEVEL: u32 = 7;
+
 /// Display a log event with appropriate formatting and colors.
 pub fn display_log_event(event: &EslEvent, output: &Output) {
     let log_level = event
@@ -19,11 +22,14 @@ pub fn display_log_event(event: &EslEvent, output: &Output) {
             raw.parse::<u32>()
                 .ok()
                 .or_else(|| {
-                    debug!("unparseable Log-Level {:?}, defaulting to 7", raw);
+                    debug!(
+                        "unparseable Log-Level {:?}, defaulting to {}",
+                        raw, DEFAULT_LOG_LEVEL
+                    );
                     None
                 })
         })
-        .unwrap_or(7);
+        .unwrap_or(DEFAULT_LOG_LEVEL);
 
     let message = event
         .body()

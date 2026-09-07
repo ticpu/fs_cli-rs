@@ -294,7 +294,8 @@ impl FsCliCompleter {
 
         trace!("Sent completion request, waiting for response...");
 
-        match response_rx.recv_timeout(Duration::from_millis(500)) {
+        const SESSION_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
+        match response_rx.recv_timeout(SESSION_REPLY_TIMEOUT) {
             Ok(completions) => {
                 trace!("Received {} completions", completions.len());
                 completions
