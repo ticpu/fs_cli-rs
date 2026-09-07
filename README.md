@@ -9,8 +9,13 @@ Interactive FreeSWITCH CLI client written in Rust using
 - Colorized log and command output (configurable: `never`, `tag`, `line`)
 - YAML configuration profiles (`~/.config/fs_cli.yaml`, `/etc/freeswitch/fs_cli.yaml`)
 - Automatic reconnection on connection loss (`-R`)
+- Event subscription on startup (`--events`), gating the idle-liveness timer
 - Userauth support (`-u user@domain`)
 - Non-interactive mode (`-x "command"`, repeatable)
+
+The boolean flags `-r`/`--retry`, `-R`/`--reconnect`, `--events`, and
+`-q`/`--quiet` take an optional value, so a profile default can be
+overridden explicitly (`-r false`) instead of only ever being turned on.
 
 ## Installation
 
@@ -55,17 +60,18 @@ On first run, `fs_cli` creates a default config at `~/.config/fs_cli.yaml`.
 Profiles override defaults per-connection:
 
 ```yaml
-default:
-  host: localhost
-  port: 8021
-  password: ClueCon
-  log_level: debug
-  color: line
+fs_cli:
+  default:
+    host: localhost
+    port: 8021
+    password: ClueCon
+    log_level: debug
+    color: line
 
-production:
-  host: pbx.example.com
-  password: secret
-  quiet: true
+  production:
+    host: pbx.example.com
+    password: secret
+    quiet: true
 ```
 
 ## License

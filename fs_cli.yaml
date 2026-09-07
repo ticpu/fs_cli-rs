@@ -24,11 +24,14 @@ fs_cli:
       f10: fsctl pause
       f11: fsctl resume
       f12: version
+    max_auto_complete_uuid: 32
 
   prod:
     host: prod-freeswitch-server.example.com
     port: 8022
     password: SecurePassword123
+    user: admin@default
+    history_file: /var/log/fs_cli_history
     debug: 1
     timeout: 5000
     retry: true
