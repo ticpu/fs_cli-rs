@@ -88,6 +88,7 @@ git push --tags
    Signs every asset with the key from `git config user.signingkey`, uploads the
    `.asc` files, then flips the release public as its last act. Assets can no
    longer be added once a release is published, so signing never happens after.
+   `-n` runs a dry run that signs and verifies without uploading or publishing.
 
 9. Update the AUR package:
 
@@ -99,7 +100,18 @@ git push
    The script should print the new version; troubleshoot only if it fails.
    AUR commits get no Co-Authored-By trailer.
 
-10. Report the tag and changelog.
+10. Publish the Debian packages to apt.ticpu.net, from `~/GIT/apt-ticpu-net`:
+
+```sh
+cd ~/GIT/apt-ticpu-net && ./ingest.sh fs_cli-rs vX.Y.Z
+```
+
+    It downloads the release's `.deb` assets, verifies their signatures
+    against the archive key, checks each package's version against the tag,
+    includes them in every suite `projects.yaml` lists for this project, and
+    publishes. `-n` inspects without touching the archive.
+
+11. Report the tag and changelog.
 
 ## Important
 
