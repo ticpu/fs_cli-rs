@@ -13,7 +13,7 @@ use crate::connection::{
     subscribe_heartbeat, subscribe_to_events,
 };
 use crate::console_complete::get_console_complete;
-use crate::log_display::{display_log_event, format_channel_event, is_log_event};
+use crate::log_display::{display_log_event, format_channel_event, is_log_event, LogDestination};
 use crate::printer::{Output, Printer};
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, ReadlineChannels};
 use anyhow::Result;
@@ -95,6 +95,7 @@ pub async fn run_interactive_mode(
     client: EslClient,
     events: EslEventStream,
     config: &AppConfig,
+    log_destination: Option<LogDestination>,
 ) -> Result<()> {
     let mut output = Output::new(config.color);
 
@@ -125,7 +126,15 @@ pub async fn run_interactive_mode(
         completion_rx: &mut chans.completions,
     };
 
-    let session_result = run_reconnect_loop(client, events, config, &mut ctx, &output).await;
+    let session_result = run_reconnect_loop(
+        client,
+        events,
+        config,
+        &mut ctx,
+        &output,
+        log_destination.as_ref(),
+    )
+    .await;
 
     shutdown_readline(readline_handle, session_result.is_err(), original_termios).await;
 
@@ -157,9 +166,10 @@ async fn run_reconnect_loop(
     config: &AppConfig,
     ctx: &mut CommandLoopCtx<'_>,
     output: &Output,
+    log_destination: Option<&LogDestination>,
 ) -> Result<()> {
     loop {
-        let mut event_task = spawn_event_consumer(events, output);
+        let mut event_task = spawn_event_consumer(events, output, log_destination.cloned());
 
         let result = run_command_loop(&client, ctx, &mut event_task).await;
 
@@ -244,7 +254,11 @@ async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
 }
 
 /// Spawn a task that consumes events and displays log/channel messages
-fn spawn_event_consumer(mut events: EslEventStream, output: &Output) -> JoinHandle<()> {
+fn spawn_event_consumer(
+    mut events: EslEventStream,
+    output: &Output,
+    log_destination: Option<LogDestination>,
+) -> JoinHandle<()> {
     let output = output.clone();
     tokio::spawn(async move {
         while let Some(result) = events
@@ -264,6 +278,9 @@ fn spawn_event_consumer(mut events: EslEventStream, output: &Output) -> JoinHand
                         output.print(msg);
                     } else if is_log_event(&event) {
                         display_log_event(&event, &output);
+                        if let Some(destination) = &log_destination {
+                            destination.write_event(&event);
+                        }
                     }
                 }
                 Err(e) => {

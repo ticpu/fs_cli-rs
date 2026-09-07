@@ -3,6 +3,8 @@
 use colored::{ColoredString, Colorize};
 use rustyline::ExternalPrinter;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::warn;
 
@@ -81,6 +83,54 @@ impl Printer {
             }
         }
         fallback(&msg);
+    }
+}
+
+/// A file or stdout, written line by line as an `ExternalPrinter` so it can
+/// back a [`Printer`] like rustyline's own.
+pub struct LogSink {
+    writer: Box<dyn Write + Send>,
+    broken: Arc<AtomicBool>,
+}
+
+impl LogSink {
+    /// Sink writing to an already-opened file.
+    pub fn file(file: std::fs::File) -> Self {
+        Self::new(Box::new(file))
+    }
+
+    /// Sink writing to this process's stdout.
+    pub fn stdout() -> Self {
+        Self::new(Box::new(std::io::stdout()))
+    }
+
+    fn new(writer: Box<dyn Write + Send>) -> Self {
+        Self {
+            writer,
+            broken: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl ExternalPrinter for LogSink {
+    /// A failure is recorded rather than returned: `Printer` answers an `Err`
+    /// by printing to stdout, which for a closed pipe panics.
+    fn print(&mut self, msg: String) -> rustyline::Result<()> {
+        if self
+            .broken
+            .load(Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        if let Err(e) = writeln!(self.writer, "{}", msg).and_then(|()| {
+            self.writer
+                .flush()
+        }) {
+            warn!("log destination write failed, stopping log capture: {}", e);
+            self.broken
+                .store(true, Ordering::Relaxed);
+        }
+        Ok(())
     }
 }
 

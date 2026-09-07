@@ -25,6 +25,7 @@ use commands::CommandProcessor;
 use config::{AppConfig, BatchCommand};
 use connection::{connect_to_freeswitch_with_retry, print_connect_error};
 use esl_debug::EslDebugLevel;
+use log_display::LogDestination;
 
 #[tokio::main(flavor = "current_thread")]
 // qual:allow(iosp) reason: "entry point wiring the program together; splitting it would invent indirection"
@@ -40,6 +41,12 @@ async fn main() -> Result<()> {
         );
         std::process::exit(1);
     }
+
+    // Opened before connecting so an unwritable path fails without a session.
+    let log_destination = match &config.log_file {
+        Some(spec) => Some(LogDestination::open(spec, config.color)?),
+        None => None,
+    };
 
     debug!("About to connect to FreeSWITCH");
     let (client, events) = match connect_to_freeswitch_with_retry(&config).await {
@@ -62,7 +69,9 @@ async fn main() -> Result<()> {
         client
             .disconnect()
             .await?;
-    } else if let Err(e) = session::run_interactive_mode(client, events, &config).await {
+    } else if let Err(e) =
+        session::run_interactive_mode(client, events, &config, log_destination).await
+    {
         eprintln!("{:#}", e);
         std::process::exit(1);
     }

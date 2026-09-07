@@ -1,6 +1,7 @@
 //! Log display functionality for fs_cli-rs
 
-use crate::printer::{ColorMode, Output};
+use crate::printer::{ColorMode, LogSink, Output, Printer};
+use anyhow::{Context, Result};
 use colored::{ColoredString, Colorize};
 use freeswitch_esl_tokio::{EslEvent, EslEventType, EventHeader, HeaderLookup};
 use tracing::debug;
@@ -16,6 +17,13 @@ const DEFAULT_LOG_LEVEL: u32 = 7;
 
 /// Display a log event with appropriate formatting and colors.
 pub fn display_log_event(event: &EslEvent, output: &Output) {
+    if let Some(line) = format_log_line(event, output.color()) {
+        output.print(line);
+    }
+}
+
+/// One display line for a log event, or None when it carries no text.
+pub fn format_log_line(event: &EslEvent, color: ColorMode) -> Option<String> {
     let log_level = event
         .header(EventHeader::LogLevel)
         .and_then(|raw| {
@@ -33,23 +41,52 @@ pub fn display_log_event(event: &EslEvent, output: &Output) {
 
     let message = event
         .body()
-        .unwrap_or("");
-    if message
-        .trim()
-        .is_empty()
-    {
-        return;
+        .unwrap_or("")
+        .trim();
+    if message.is_empty() {
+        return None;
     }
 
-    let formatted_message = match output.color() {
-        ColorMode::Never => message
-            .trim()
-            .to_string(),
-        ColorMode::Tag => format_colored_log_tag_only(message.trim(), log_level),
-        ColorMode::Line => format_colored_log_full_line(message.trim(), log_level),
-    };
+    Some(match color {
+        ColorMode::Never => message.to_string(),
+        ColorMode::Tag => format_colored_log_tag_only(message, log_level),
+        ColorMode::Line => format_colored_log_full_line(message, log_level),
+    })
+}
 
-    output.print(formatted_message);
+/// The `--log-file` destination: log lines only, on their own writer.
+#[derive(Clone)]
+pub struct LogDestination {
+    printer: Printer,
+    color: ColorMode,
+}
+
+impl LogDestination {
+    /// `-` is stdout, anything else a file opened for append.
+    pub fn open(spec: &str, requested: ColorMode) -> Result<Self> {
+        let (sink, color) = if spec == "-" {
+            (LogSink::stdout(), requested)
+        } else {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(spec)
+                .with_context(|| format!("cannot open log destination {}", spec))?;
+            (LogSink::file(file), ColorMode::Never)
+        };
+        Ok(Self {
+            printer: Printer::with_external(sink),
+            color,
+        })
+    }
+
+    /// Write a log event; anything else is left to the caller.
+    pub fn write_event(&self, event: &EslEvent) {
+        if let Some(line) = format_log_line(event, self.color) {
+            self.printer
+                .print(line);
+        }
+    }
 }
 
 /// `<number> name` for a channel, or None when neither is set.
@@ -160,6 +197,41 @@ mod tests {
 
         let empty_event = EslEvent::new();
         assert!(!is_log_event(&empty_event));
+    }
+
+    fn log_event(level: &str, body: &str) -> EslEvent {
+        let mut event = EslEvent::new();
+        event.set_header("Content-Type", "log/data");
+        event.set_header("Log-Level", level);
+        event.set_body(body);
+        event
+    }
+
+    #[test]
+    fn format_log_line_trims_and_leaves_never_uncolored() {
+        let line = format_log_line(&log_event("3", "  boom  \n"), ColorMode::Never);
+        assert_eq!(line, Some("boom".to_string()));
+    }
+
+    #[test]
+    fn format_log_line_skips_an_empty_body() {
+        assert_eq!(
+            format_log_line(&log_event("6", "  \n"), ColorMode::Never),
+            None
+        );
+        assert_eq!(format_log_line(&EslEvent::new(), ColorMode::Never), None);
+    }
+
+    #[test]
+    fn format_log_line_keeps_the_text_in_every_color_mode() {
+        for mode in [ColorMode::Never, ColorMode::Tag, ColorMode::Line] {
+            let line = format_log_line(&log_event("3", "x [ERR] boom"), mode).expect("a log line");
+            assert!(
+                line.contains("[ERR]") && line.contains("boom"),
+                "{:?}",
+                line
+            );
+        }
     }
 
     #[test]
