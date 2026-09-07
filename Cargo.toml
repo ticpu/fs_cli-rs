@@ -32,3 +32,6 @@ crossterm = "0.29"
 libc = "0.2"
 dirs = "6"
 gethostname = "1"
+
+[dev-dependencies]
+indexmap = "2"

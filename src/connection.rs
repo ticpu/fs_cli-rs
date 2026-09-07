@@ -34,6 +34,10 @@ pub(crate) async fn connect_to_freeswitch(
         .await
         .context("Failed to connect to FreeSWITCH")?;
 
+    // Without this the library's own 5s default governs every api call, and
+    // -T would silently mean "connect only".
+    client.set_command_timeout(Duration::from_millis(config.timeout));
+
     Ok((client, events))
 }
 

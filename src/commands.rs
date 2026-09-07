@@ -5,9 +5,30 @@ use crate::log_level::{set_log_level, LogSetting};
 use crate::printer::Output;
 use anyhow::{Error, Result};
 use colored::*;
-use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError};
+use freeswitch_esl_tokio::{CommandFailure, EslClient, EslError, EslResponse};
 use std::collections::HashMap;
 use tracing::trace;
+
+/// The body to display, or the refusal to frame.
+///
+/// Only a refused command becomes an error here. `api_result` peels the `+OK `
+/// that a bare `+OK` reply consists of entirely and calls the empty remainder
+/// a `ProtocolError`, whose `is_connection_error` is true — routing that
+/// through the error path would read a successful command as a disconnect.
+fn api_outcome(response: &EslResponse) -> Result<String, EslError> {
+    match response.api_result() {
+        Err(e)
+            if e.command_failure()
+                .is_some() =>
+        {
+            Err(e)
+        }
+        _ => Ok(response
+            .body()
+            .unwrap_or_default()
+            .to_string()),
+    }
+}
 
 /// Label and text for a refused command, or None when the failure carries no
 /// text to frame. An unprefixed reply keeps all of it: the switch answers
@@ -49,24 +70,11 @@ impl CommandProcessor {
     /// Transport errors and refused commands propagate as `EslError`; callers
     /// frame the latter through `EslError::command_failure`.
     async fn api_body(&self, client: &EslClient, command: &str) -> Result<String> {
-        let response = client
-            .api(command)
-            .await?;
-        match response.api_result() {
-            Err(e)
-                if e.command_failure()
-                    .is_some() =>
-            {
-                Err(e.into())
-            }
-            // api_result() strips the "+OK " that a bare "+OK" reply is made
-            // of entirely, and calls the empty rest a ProtocolError; that reply
-            // is a success the display path still has to print.
-            _ => Ok(response
-                .body()
-                .unwrap_or_default()
-                .to_string()),
-        }
+        Ok(api_outcome(
+            &client
+                .api(command)
+                .await?,
+        )?)
     }
 
     /// Execute a FreeSWITCH command
@@ -93,23 +101,18 @@ impl CommandProcessor {
                     self.print_message(&body);
                 }
             }
-            Err(e) => {
-                let esl = e.downcast_ref::<EslError>();
-                if esl.is_some_and(EslError::is_connection_error) {
-                    return Err(e);
-                }
-                match esl
-                    .and_then(EslError::command_failure)
-                    .and_then(|f| frame_failure(&f))
-                {
-                    Some((label, text)) => self
-                        .output
-                        .print_labeled(label, text),
-                    None => self
-                        .output
-                        .print_labeled_error("API Error", &e),
-                }
-            }
+            // Only a refused command is reported and survived. A transport
+            // fault propagates, so `-x` still exits non-zero on one.
+            Err(e) => match e
+                .downcast_ref::<EslError>()
+                .and_then(EslError::command_failure)
+                .and_then(|f| frame_failure(&f))
+            {
+                Some((label, text)) => self
+                    .output
+                    .print_labeled(label, text),
+                None => return Err(e),
+            },
         }
 
         Ok(())
@@ -251,6 +254,43 @@ mod tests {
         EslError::CommandFailed {
             reply_text: reply_text.to_string(),
         }
+    }
+
+    fn response_with_body(body: &str) -> EslResponse {
+        EslResponse::new(indexmap::IndexMap::new(), Some(body.to_string()))
+    }
+
+    /// A successful command must never reach the error path: `api_result`
+    /// answers a bare `+OK` with a ProtocolError that reads as a disconnect.
+    #[test]
+    fn only_a_refused_reply_becomes_an_error() {
+        for body in ["+OK\n", "+OK 42 sessions\n", "", "   \n", "some payload\n"] {
+            assert!(
+                api_outcome(&response_with_body(body)).is_ok(),
+                "body {:?} must be displayable, not an error",
+                body
+            );
+        }
+
+        for body in ["-ERR no such channel\n", "-USAGE: <uuid>\n", "-ERROR\n"] {
+            let err = api_outcome(&response_with_body(body))
+                .expect_err("a refusal must reach the error path");
+            assert!(
+                err.command_failure()
+                    .is_some(),
+                "body {:?} must carry a framable failure",
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn a_displayed_body_is_the_wire_body_verbatim() {
+        assert_eq!(
+            api_outcome(&response_with_body("+OK\n")).unwrap(),
+            "+OK\n",
+            "the +OK prefix is what a bare +OK reply consists of"
+        );
     }
 
     #[test]
