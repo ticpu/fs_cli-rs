@@ -1,5 +1,6 @@
 //! Tab completion support for fs_cli-rs
 
+use crate::log_level::LogSetting;
 use rustyline::completion::{
     extract_word, longest_common_prefix, Completer, FilenameCompleter, Pair,
 };
@@ -167,6 +168,46 @@ fn esl_candidates(completions: Vec<Completion>, current_word: &str) -> Vec<Pair>
     candidates
 }
 
+/// Completions for the level argument of `/log`/`log`, checked before the
+/// `/`-prefix skip below since this is a client command, not an ESL one.
+fn log_level_completions(line: &str, pos: usize) -> Option<(usize, Vec<Pair>)> {
+    let trimmed_start = line.len()
+        - line
+            .trim_start()
+            .len();
+    let rest = &line[trimmed_start..];
+    let head_len = rest
+        .find(' ')
+        .unwrap_or(rest.len());
+    let head = &rest[..head_len];
+    if head != "log" && head != "/log" {
+        return None;
+    }
+
+    let head_end = trimmed_start + head_len;
+    if pos <= head_end {
+        return None;
+    }
+    // Cursor already past the level argument (a further word follows it).
+    if line[head_end..pos]
+        .trim_start()
+        .contains(' ')
+    {
+        return None;
+    }
+
+    let (start, current_word) = extract_word(line, pos, None, |c| c == ' ');
+    let candidates: Vec<Pair> = LogSetting::level_names()
+        .into_iter()
+        .filter(|name| name.starts_with(current_word))
+        .map(|name| Pair {
+            display: name.to_string(),
+            replacement: name.to_string(),
+        })
+        .collect();
+    Some((start, candidates))
+}
+
 /// FreeSWITCH CLI completer with command suggestions
 pub struct FsCliCompleter {
     filename_completer: FilenameCompleter,
@@ -277,6 +318,11 @@ impl Completer for FsCliCompleter {
         pos: usize,
         ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        if let Some((start, mut candidates)) = log_level_completions(line, pos) {
+            add_trailing_space(&mut candidates);
+            return Ok((start, candidates));
+        }
+
         if !line
             .trim_start()
             .starts_with('/')
@@ -355,5 +401,35 @@ impl Validator for FsCliCompleter {
     fn validate_while_typing(&self) -> bool {
         self.bracket_validator
             .validate_while_typing()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_completes_levels_after_the_command_word() {
+        let (start, candidates) = log_level_completions("/log e", 6).unwrap();
+        assert_eq!(start, 5);
+        let names: Vec<&str> = candidates
+            .iter()
+            .map(|p| {
+                p.display
+                    .as_str()
+            })
+            .collect();
+        assert!(names.contains(&"err"));
+
+        let (start, candidates) = log_level_completions("log ", 4).unwrap();
+        assert_eq!(start, 4);
+        assert!(candidates.len() > 1);
+    }
+
+    #[test]
+    fn log_completion_does_not_fire_on_the_command_word_or_past_the_level() {
+        assert!(log_level_completions("lo", 2).is_none());
+        assert!(log_level_completions("log", 3).is_none());
+        assert!(log_level_completions("log error extra", 15).is_none());
     }
 }

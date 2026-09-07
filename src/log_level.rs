@@ -12,17 +12,22 @@ pub(crate) enum LogSetting {
 }
 
 impl LogSetting {
-    /// Help text listing every level `/log` accepts.
-    pub(crate) fn help_text() -> String {
+    /// Wire names `/log` accepts: every `LogLevel` but `Disable`, plus `nolog`.
+    pub(crate) fn level_names() -> Vec<&'static str> {
         let mut levels: Vec<&str> = LogLevel::ALL
             .iter()
             .filter(|l| **l != LogLevel::Disable)
             .map(|l| l.as_str())
             .collect();
         levels.push("nolog");
+        levels
+    }
+
+    /// Help text listing every level `/log` accepts.
+    pub(crate) fn help_text() -> String {
         format!(
             "Usage: /log <level>\nAvailable levels: {}",
-            levels.join(", ")
+            Self::level_names().join(", ")
         )
     }
 }
