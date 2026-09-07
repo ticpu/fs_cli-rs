@@ -5,15 +5,15 @@
 use crate::channel_info::ChannelProvider;
 use crate::commands::CommandProcessor;
 use crate::config::AppConfig;
+use crate::connection::{
+    connect_retry_forever, enable_logging, is_connection_error, is_permission_denied,
+    subscribe_heartbeat, subscribe_to_events,
+};
 use crate::console_complete::get_console_complete;
 use crate::esl_debug::EslDebugLevel;
 use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::Printer;
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
-use crate::{
-    connect_retry_forever, enable_logging, is_connection_error, is_permission_denied,
-    subscribe_heartbeat, subscribe_to_events,
-};
 use anyhow::Result;
 use colored::Colorize;
 use crossterm::{
