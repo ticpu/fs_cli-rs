@@ -95,24 +95,29 @@ impl ReadlineChannels {
     }
 }
 
+/// The F1-F12 keys that have a command, in key order.
+pub fn fn_key_bindings(macros: &HashMap<String, String>) -> impl Iterator<Item = (u8, &String)> {
+    (1u8..=12).filter_map(|i| {
+        macros
+            .get(&format!("f{}", i))
+            .map(|command| (i, command))
+    })
+}
+
 fn setup_function_key_bindings(
     rl: &mut Editor<FsCliCompleter, FileHistory>,
     macros: &HashMap<String, String>,
 ) -> Result<()> {
-    for i in 1..=12 {
-        let key = format!("f{}", i);
-        if let Some(command) = macros.get(&key) {
-            let f_key = KeyEvent(KeyCode::F(i as u8), Modifiers::NONE);
-            rl.bind_sequence(
-                f_key,
-                EventHandler::Macro(vec![
-                    Cmd::Stash,
-                    Cmd::Kill(Movement::WholeLine),
-                    Cmd::Insert(1, command.clone()),
-                    Cmd::AcceptLine,
-                ]),
-            );
-        }
+    for (i, command) in fn_key_bindings(macros) {
+        rl.bind_sequence(
+            KeyEvent(KeyCode::F(i), Modifiers::NONE),
+            EventHandler::Macro(vec![
+                Cmd::Stash,
+                Cmd::Kill(Movement::WholeLine),
+                Cmd::Insert(1, command.clone()),
+                Cmd::AcceptLine,
+            ]),
+        );
     }
     Ok(())
 }

@@ -244,11 +244,8 @@ impl CommandProcessor {
     /// Show help information with the effective (merged) function key bindings.
     pub fn show_help(&self, macros: &HashMap<String, String>) {
         let mut fnkey_lines = String::new();
-        for i in 1u8..=12 {
-            let key = format!("f{}", i);
-            if let Some(cmd) = macros.get(&key) {
-                fnkey_lines.push_str(&format!("  F{:<3} = {}\n", i, cmd));
-            }
+        for (i, cmd) in crate::readline::fn_key_bindings(macros) {
+            fnkey_lines.push_str(&format!("  F{:<3} = {}\n", i, cmd));
         }
 
         let help_text = format!(

@@ -110,8 +110,8 @@ impl Args {
             .is_some();
 
         let mut app_config = match config.get_profile(profile_name) {
-            Ok(profile) => profile.to_app_config()?,
-            Err(_) if !explicitly_named => ProfileConfig::default().to_app_config()?,
+            Ok(profile) => profile.into_app_config(),
+            Err(_) if !explicitly_named => ProfileConfig::default().into_app_config(),
             Err(_) => {
                 let mut names = config.get_profile_names();
                 names.sort();

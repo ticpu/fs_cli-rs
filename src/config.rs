@@ -4,7 +4,6 @@ use crate::commands::ColorMode;
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::LogSetting;
 use anyhow::{Context, Result};
-use freeswitch_esl_tokio::LogLevel;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -16,140 +15,100 @@ pub struct FsCliConfig {
     pub fs_cli: HashMap<String, ProfileConfig>,
 }
 
-/// Configuration for a single profile
+/// Configuration for a single profile. Every field a profile may leave out
+/// falls back to `Default`, which states each default exactly once.
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(default)]
 pub struct ProfileConfig {
     /// FreeSWITCH hostname or IP address
-    pub host: Option<String>,
+    pub host: String,
 
     /// FreeSWITCH ESL port
-    pub port: Option<u16>,
+    pub port: u16,
 
     /// ESL password
-    pub password: Option<String>,
+    pub password: String,
 
     /// Username for authentication (optional)
     pub user: Option<String>,
 
     /// ESL debug level (0-7, higher = more verbose)
-    pub debug: Option<EslDebugLevel>,
+    pub debug: EslDebugLevel,
 
     /// Color mode for output
-    pub color: Option<ColorMode>,
+    pub color: ColorMode,
 
     /// History file path
     pub history_file: Option<PathBuf>,
 
     /// Connection timeout in milliseconds
-    pub timeout: Option<u64>,
+    pub timeout: u64,
 
     /// Retry connection on failure
-    pub retry: Option<bool>,
+    pub retry: bool,
 
     /// Reconnect on connection loss
-    pub reconnect: Option<bool>,
+    pub reconnect: bool,
 
     /// Subscribe to events on startup
-    pub events: Option<bool>,
+    pub events: bool,
 
     /// Log level for FreeSWITCH logs
-    pub log_level: Option<LogSetting>,
+    pub log_level: LogSetting,
 
     /// Disable automatic log subscription on startup
-    pub quiet: Option<bool>,
+    pub quiet: bool,
 
     /// Function key macros
-    pub macros: Option<HashMap<String, String>>,
+    pub macros: HashMap<String, String>,
 
     /// Maximum number of channels to show in auto-complete
-    pub max_auto_complete_uuid: Option<u32>,
+    pub max_auto_complete_uuid: u32,
 }
 
 impl Default for ProfileConfig {
     fn default() -> Self {
         Self {
-            host: Some("localhost".to_string()),
-            port: Some(8021),
-            password: Some("ClueCon".to_string()),
+            host: "localhost".to_string(),
+            port: 8021,
+            password: "ClueCon".to_string(),
             user: None,
-            debug: Some(EslDebugLevel::None),
-            color: Some(ColorMode::Line),
+            debug: EslDebugLevel::None,
+            color: ColorMode::Line,
             history_file: None,
-            timeout: Some(2000),
-            retry: Some(false),
-            reconnect: Some(false),
-            events: Some(false),
-            log_level: Some(LogSetting::Level(LogLevel::Debug)),
-            quiet: Some(false),
-            macros: Some(Self::default_macros()),
-            max_auto_complete_uuid: Some(32),
+            timeout: 2000,
+            retry: false,
+            reconnect: false,
+            events: false,
+            log_level: LogSetting::Level(freeswitch_esl_tokio::LogLevel::Debug),
+            quiet: false,
+            macros: crate::readline::get_default_fnkeys(),
+            max_auto_complete_uuid: 32,
         }
     }
 }
 
 impl ProfileConfig {
-    fn default_macros() -> HashMap<String, String> {
-        crate::readline::DEFAULT_FNKEYS
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
-}
-
-impl ProfileConfig {
     /// Convert to typed values for application use
-    pub fn to_app_config(&self) -> Result<AppConfig> {
-        Ok(AppConfig {
-            host: self
-                .host
-                .clone()
-                .unwrap_or_else(|| "localhost".to_string()),
-            port: self
-                .port
-                .unwrap_or(8021),
-            password: self
-                .password
-                .clone()
-                .unwrap_or_else(|| "ClueCon".to_string()),
-            user: self
-                .user
-                .clone(),
-            debug: self
-                .debug
-                .unwrap_or_default(),
-            color: self
-                .color
-                .unwrap_or(ColorMode::Line),
-            history_file: self
-                .history_file
-                .clone(),
-            timeout: self
-                .timeout
-                .unwrap_or(2000),
-            retry: self
-                .retry
-                .unwrap_or(false),
-            reconnect: self
-                .reconnect
-                .unwrap_or(false),
-            events: self
-                .events
-                .unwrap_or(false),
-            log_level: self
-                .log_level
-                .unwrap_or(LogSetting::Level(LogLevel::Debug)),
-            quiet: self
-                .quiet
-                .unwrap_or(false),
-            macros: self
-                .macros
-                .clone()
-                .unwrap_or_default(),
-            execute: Vec::new(), // Always empty from config, filled by CLI args
-            max_auto_complete_uuid: self
-                .max_auto_complete_uuid
-                .unwrap_or(32),
-        })
+    pub fn into_app_config(self) -> AppConfig {
+        AppConfig {
+            host: self.host,
+            port: self.port,
+            password: self.password,
+            user: self.user,
+            debug: self.debug,
+            color: self.color,
+            history_file: self.history_file,
+            timeout: self.timeout,
+            retry: self.retry,
+            reconnect: self.reconnect,
+            events: self.events,
+            log_level: self.log_level,
+            quiet: self.quiet,
+            macros: self.macros,
+            execute: Vec::new(),
+            max_auto_complete_uuid: self.max_auto_complete_uuid,
+        }
     }
 }
 
@@ -276,59 +235,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_boolean_config_parsing() {
+    fn test_omitted_fields_take_the_defaults() {
         let yaml_content = r#"
 fs_cli:
-  test_true:
-    host: localhost
-    retry: true
-    reconnect: true
-    events: true
-    quiet: true
-  test_false:
-    host: localhost
-    retry: false
-    reconnect: false
-    events: false
-    quiet: false
+  sparse:
+    host: fs.example.test
 "#;
-
         let config: FsCliConfig = serde_yaml::from_str(yaml_content).unwrap();
-
-        // Test true profile
-        let true_profile = config
-            .get_profile("test_true")
-            .unwrap();
-        assert_eq!(true_profile.retry, Some(true));
-        assert_eq!(true_profile.reconnect, Some(true));
-        assert_eq!(true_profile.events, Some(true));
-        assert_eq!(true_profile.quiet, Some(true));
-
-        // Test false profile
-        let false_profile = config
-            .get_profile("test_false")
-            .unwrap();
-        assert_eq!(false_profile.retry, Some(false));
-        assert_eq!(false_profile.reconnect, Some(false));
-        assert_eq!(false_profile.events, Some(false));
-        assert_eq!(false_profile.quiet, Some(false));
-
-        // Test to_app_config conversion
-        let true_app_config = true_profile
-            .to_app_config()
-            .unwrap();
-        assert!(true_app_config.retry);
-        assert!(true_app_config.reconnect);
-        assert!(true_app_config.events);
-        assert!(true_app_config.quiet);
-
-        let false_app_config = false_profile
-            .to_app_config()
-            .unwrap();
-        assert!(!false_app_config.retry);
-        assert!(!false_app_config.reconnect);
-        assert!(!false_app_config.events);
-        assert!(!false_app_config.quiet);
+        let app = config
+            .get_profile("sparse")
+            .unwrap()
+            .into_app_config();
+        let defaults = ProfileConfig::default();
+        assert_eq!(app.host, "fs.example.test");
+        assert_eq!(app.port, defaults.port);
+        assert_eq!(app.timeout, defaults.timeout);
+        assert_eq!(app.macros, defaults.macros);
+        assert!(!app.retry);
     }
 
     #[test]
@@ -345,22 +268,23 @@ fs_cli:
         let profile = config
             .get_profile("p1")
             .unwrap();
-        assert_eq!(profile.color, Some(crate::commands::ColorMode::Tag));
+        assert_eq!(profile.color, crate::commands::ColorMode::Tag);
         assert_eq!(
             profile.log_level,
-            Some(LogSetting::Level(LogLevel::Warning))
+            LogSetting::Level(freeswitch_esl_tokio::LogLevel::Warning)
         );
-        assert_eq!(profile.debug, Some(crate::esl_debug::EslDebugLevel::Debug5));
+        assert_eq!(profile.debug, crate::esl_debug::EslDebugLevel::Debug5);
         assert_eq!(
             profile.history_file,
             Some(std::path::PathBuf::from("/tmp/hist"))
         );
 
-        let app = profile
-            .to_app_config()
-            .unwrap();
+        let app = profile.into_app_config();
         assert_eq!(app.color, crate::commands::ColorMode::Tag);
-        assert_eq!(app.log_level, LogSetting::Level(LogLevel::Warning));
+        assert_eq!(
+            app.log_level,
+            LogSetting::Level(freeswitch_esl_tokio::LogLevel::Warning)
+        );
         assert_eq!(app.debug, crate::esl_debug::EslDebugLevel::Debug5);
         assert_eq!(
             app.history_file,
@@ -403,8 +327,11 @@ fs_cli:
         let profile = reparsed
             .get_profile("default")
             .unwrap();
-        assert_eq!(profile.color, Some(crate::commands::ColorMode::Line));
-        assert_eq!(profile.log_level, Some(LogSetting::Level(LogLevel::Debug)));
-        assert_eq!(profile.debug, Some(crate::esl_debug::EslDebugLevel::None));
+        assert_eq!(profile.color, crate::commands::ColorMode::Line);
+        assert_eq!(
+            profile.log_level,
+            LogSetting::Level(freeswitch_esl_tokio::LogLevel::Debug)
+        );
+        assert_eq!(profile.debug, crate::esl_debug::EslDebugLevel::None);
     }
 }
