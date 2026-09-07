@@ -184,6 +184,15 @@ impl ProfileConfig {
     }
 }
 
+/// One command given on the command line, in the order it was typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchCommand {
+    /// `-x`: a synchronous api call.
+    Api(String),
+    /// `-X`: a bgapi call, whose result arrives later as a BACKGROUND_JOB event.
+    BgApi(String),
+}
+
 /// Typed application configuration after parsing and validation
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -201,7 +210,7 @@ pub struct AppConfig {
     pub log_level: LogSetting,
     pub quiet: bool,
     pub macros: HashMap<String, String>,
-    pub execute: Vec<String>,
+    pub execute: Vec<BatchCommand>,
     pub log_file: Option<String>,
     pub max_auto_complete_uuid: u32,
 }

@@ -519,3 +519,37 @@ async fn no_terminal_and_no_commands_fails_loudly() {
         "the mode check must run before connecting"
     );
 }
+
+#[tokio::test]
+async fn batch_commands_reach_the_wire_in_the_typed_order() {
+    let server = FakeEsl::start(Script::default()).await;
+    let dir = scratch_dir("batch-order");
+
+    let output = tokio::task::spawn_blocking({
+        let mut command = cli(&dir, server.addr);
+        command.args(["-x", "one", "-X", "two", "-x", "three"]);
+        move || {
+            command
+                .output()
+                .expect("run fs_cli batch")
+        }
+    })
+    .await
+    .expect("join fs_cli");
+
+    assert!(
+        output
+            .status
+            .success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        server.commands(0),
+        vec![
+            "api one".to_string(),
+            "bgapi two".to_string(),
+            "api three".to_string()
+        ]
+    );
+}

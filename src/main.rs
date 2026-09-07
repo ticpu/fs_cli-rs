@@ -1,6 +1,6 @@
 //! fs_cli-rs: Interactive FreeSWITCH CLI client using ESL
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use freeswitch_esl_tokio::EslClient;
 use std::io::IsTerminal;
 use tracing::{debug, info};
@@ -22,7 +22,7 @@ mod session;
 
 use args::Args;
 use commands::CommandProcessor;
-use config::AppConfig;
+use config::{AppConfig, BatchCommand};
 use connection::{connect_to_freeswitch_with_retry, print_connect_error};
 use esl_debug::EslDebugLevel;
 
@@ -95,15 +95,49 @@ fn setup_logging(debug_level: EslDebugLevel) {
 
 async fn execute_commands(
     client: &EslClient,
-    commands: &[String],
+    commands: &[BatchCommand],
     config: &AppConfig,
 ) -> Result<()> {
     let output = printer::Output::new(config.color);
     let processor = CommandProcessor::new(&output);
     for command in commands {
-        processor
-            .execute_command(client, command)
-            .await?;
+        match command {
+            BatchCommand::Api(cmd) => {
+                processor
+                    .execute_command(client, cmd)
+                    .await?
+            }
+            BatchCommand::BgApi(cmd) => {
+                start_background_job(client, cmd, &processor, &output).await?
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Submits the job and reports its Job-UUID. Nothing here waits for the
+/// BACKGROUND_JOB event that carries the result.
+async fn start_background_job(
+    client: &EslClient,
+    command: &str,
+    processor: &CommandProcessor,
+    output: &printer::Output,
+) -> Result<()> {
+    let response = client
+        .bgapi(command)
+        .await
+        .with_context(|| format!("bgapi {}", command))?;
+    match response.into_result() {
+        Ok(accepted) => match accepted.job_uuid() {
+            Some(uuid) => output.print(format!("Job-UUID: {}", uuid)),
+            None => output.print_labeled(
+                "API Error",
+                &format!("bgapi {} was accepted without a Job-UUID", command),
+            ),
+        },
+        Err(e) => {
+            processor.handle_error(anyhow::Error::new(e).context(format!("bgapi {}", command)))
+        }
     }
     Ok(())
 }

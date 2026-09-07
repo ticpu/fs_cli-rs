@@ -1,11 +1,11 @@
 //! Command-line argument parsing for fs_cli-rs
 
-use crate::config::{AppConfig, FsCliConfig, ProfileConfig};
+use crate::config::{AppConfig, BatchCommand, FsCliConfig, ProfileConfig};
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::LogSetting;
 use crate::printer::ColorMode;
 use anyhow::Result;
-use clap::Parser;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 /// Interactive FreeSWITCH CLI client
@@ -43,6 +43,10 @@ pub struct Args {
     /// Execute commands and exit (can be used multiple times)
     #[arg(short = 'x', action = clap::ArgAction::Append)]
     pub execute: Vec<String>,
+
+    /// Execute commands as background jobs (bgapi), interleaved with -x
+    #[arg(short = 'X', action = clap::ArgAction::Append)]
+    pub bg_execute: Vec<String>,
 
     /// Write the FreeSWITCH log stream to PATH ("-" for stdout)
     #[arg(long, value_name = "PATH")]
@@ -88,7 +92,8 @@ pub struct Args {
 impl Args {
     /// Parse arguments and merge with configuration
     pub fn parse_and_merge() -> Result<AppConfig> {
-        let args = Self::parse();
+        let matches = Self::command().get_matches();
+        let args = Self::from_arg_matches(&matches)?;
 
         let config = FsCliConfig::load(
             args.config
@@ -105,6 +110,7 @@ impl Args {
                 .as_deref(),
         )?;
         args.apply_to(&mut app_config)?;
+        app_config.execute = ordered_commands(&matches);
         Ok(app_config)
     }
 
@@ -185,20 +191,47 @@ impl Args {
         if let Some(quiet) = self.quiet {
             config.quiet = quiet;
         }
-        config.execute = self
-            .execute
-            .clone();
         Ok(())
     }
+}
+
+/// `-x` and `-X` in the order they were typed. The derived `Vec<String>` fields
+/// keep each flag's values apart, so only clap's indices restore the sequence.
+fn ordered_commands(matches: &ArgMatches) -> Vec<BatchCommand> {
+    let mut ordered: Vec<(usize, BatchCommand)> = Vec::new();
+    for (id, wrap) in [
+        ("execute", BatchCommand::Api as fn(String) -> BatchCommand),
+        ("bg_execute", BatchCommand::BgApi),
+    ] {
+        let values = matches
+            .get_many::<String>(id)
+            .into_iter()
+            .flatten();
+        let indices = matches
+            .indices_of(id)
+            .into_iter()
+            .flatten();
+        ordered.extend(
+            values
+                .zip(indices)
+                .map(|(value, index)| (index, wrap(value.clone()))),
+        );
+    }
+    ordered.sort_by_key(|(index, _)| *index);
+    ordered
+        .into_iter()
+        .map(|(_, command)| command)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::Args;
-    use crate::config::AppConfig;
+    use crate::config::{AppConfig, BatchCommand};
     use crate::esl_debug::EslDebugLevel;
     use crate::log_level::LogSetting;
     use crate::printer::ColorMode;
+    use clap::CommandFactory;
     use freeswitch_esl_tokio::LogLevel;
     use std::collections::HashMap;
 
@@ -223,6 +256,7 @@ mod tests {
             debug: None,
             color: None,
             execute: Vec::new(),
+            bg_execute: Vec::new(),
             log_file: None,
             history_file: None,
             timeout: None,
@@ -305,16 +339,58 @@ mod tests {
         assert_eq!(config.port, 9021);
     }
 
+    /// `apply_to` no longer touches `execute`; the ordered list replaces it
+    /// wholesale in `parse_and_merge`.
     #[test]
-    fn test_apply_to_execute_always_replaced() {
+    fn test_apply_to_leaves_execute_alone() {
         let mut config = base_app_config();
-        config.execute = vec!["prior".to_string()];
+        config.execute = vec![BatchCommand::Api("prior".to_string())];
 
-        let mut args = make_args_no_overrides();
-        args.execute = vec!["status".to_string(), "version".to_string()];
-
-        args.apply_to(&mut config)
+        make_args_no_overrides()
+            .apply_to(&mut config)
             .unwrap();
-        assert_eq!(config.execute, vec!["status", "version"]);
+        assert_eq!(config.execute, vec![BatchCommand::Api("prior".to_string())]);
+    }
+
+    fn ordered_from(argv: &[&str]) -> Vec<BatchCommand> {
+        let matches = Args::command()
+            .try_get_matches_from(argv)
+            .unwrap();
+        super::ordered_commands(&matches)
+    }
+
+    #[test]
+    fn no_command_flags_yield_nothing() {
+        assert!(ordered_from(&["fs_cli"]).is_empty());
+    }
+
+    #[test]
+    fn each_flag_keeps_its_own_order() {
+        assert_eq!(
+            ordered_from(&["fs_cli", "-x", "one", "-x", "two"]),
+            vec![
+                BatchCommand::Api("one".to_string()),
+                BatchCommand::Api("two".to_string()),
+            ]
+        );
+        assert_eq!(
+            ordered_from(&["fs_cli", "-X", "one", "-X", "two"]),
+            vec![
+                BatchCommand::BgApi("one".to_string()),
+                BatchCommand::BgApi("two".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn interleaved_flags_keep_the_typed_order() {
+        assert_eq!(
+            ordered_from(&["fs_cli", "-x", "one", "-X", "two", "-x", "three"]),
+            vec![
+                BatchCommand::Api("one".to_string()),
+                BatchCommand::BgApi("two".to_string()),
+                BatchCommand::Api("three".to_string()),
+            ]
+        );
     }
 }
