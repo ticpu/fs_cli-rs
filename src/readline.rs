@@ -1,8 +1,7 @@
 //! Readline thread and function key management
 
-use crate::completion::FsCliCompleter;
+use crate::completion::{CompletionRequest, FsCliCompleter};
 use crate::config::AppConfig;
-use crate::console_complete::Completion;
 use crate::printer::Printer;
 use anyhow::Result;
 use gethostname::gethostname;
@@ -12,14 +11,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
-
-/// Completion request from readline thread to main thread
-#[derive(Debug)]
-pub struct CompletionRequest {
-    pub line: String,
-    pub pos: usize,
-    pub response_tx: std::sync::mpsc::SyncSender<Vec<Completion>>,
-}
 
 /// Default F1-F12 macro bindings in key-sorted order.
 pub const DEFAULT_FNKEYS: [(&str, &str); 12] = [

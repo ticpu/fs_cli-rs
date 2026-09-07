@@ -4,6 +4,7 @@
 
 use crate::channel_info::ChannelProvider;
 use crate::commands::CommandProcessor;
+use crate::completion::CompletionRequest;
 use crate::config::AppConfig;
 use crate::connection::{
     connect_retry_forever, enable_logging, is_connection_error, is_permission_denied,
@@ -13,7 +14,7 @@ use crate::console_complete::get_console_complete;
 use crate::esl_debug::EslDebugLevel;
 use crate::log_display::{display_log_event, is_log_event};
 use crate::printer::{Output, Printer};
-use crate::readline::{build_macros, parse_function_key, run_readline_loop, CompletionRequest};
+use crate::readline::{build_macros, parse_function_key, run_readline_loop};
 use anyhow::Result;
 use colored::Colorize;
 use crossterm::{
@@ -106,7 +107,6 @@ pub async fn run_interactive_mode(
         processor: &processor,
         macros: &macros,
         channel_provider: &channel_provider,
-        config,
         cmd_rx: &mut cmd_rx,
         quit_rx: &mut quit_rx,
         completion_rx: &mut completion_rx,
@@ -300,7 +300,6 @@ struct CommandLoopCtx<'a> {
     processor: &'a CommandProcessor,
     macros: &'a HashMap<String, String>,
     channel_provider: &'a ChannelProvider,
-    config: &'a AppConfig,
     cmd_rx: &'a mut mpsc::UnboundedReceiver<String>,
     quit_rx: &'a mut oneshot::Receiver<()>,
     completion_rx: &'a mut mpsc::UnboundedReceiver<CompletionRequest>,
@@ -333,11 +332,11 @@ async fn run_command_loop(
                 }
             }
             Some(request) = ctx.completion_rx.recv() => {
-                let completions = get_console_complete(
-                    client, &request.line, request.pos,
-                    ctx.config.debug, ctx.channel_provider,
-                ).await;
-                let _ = request.response_tx.send(completions);
+                let completions =
+                    get_console_complete(client, &request, ctx.channel_provider).await;
+                if let Err(e) = request.response_tx.send(completions) {
+                    debug!("completion reply dropped for {:?}: {}", request.line, e);
+                }
             }
             _ = &mut *ctx.quit_rx => {
                 return SessionEnd::Quit;

@@ -1,8 +1,6 @@
 //! Tab completion support for fs_cli-rs
 
-use crate::console_complete::Completion;
 use crate::esl_debug::EslDebugLevel;
-use crate::readline::CompletionRequest;
 use rustyline::completion::{
     extract_word, longest_common_prefix, Completer, FilenameCompleter, Pair,
 };
@@ -13,6 +11,25 @@ use rustyline::{Context, Helper};
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// Typed completion item returned from all completion sources
+#[derive(Debug)]
+pub enum Completion {
+    /// Regular completion candidate (display and replacement are the same)
+    Candidate(String),
+    /// UUID completion: display is full channel info, replacement is the UUID followed by a space
+    Uuid { uuid: String, display: String },
+    /// Direct write directive — replaces the entire current token
+    Write(String),
+}
+
+/// Completion request from readline thread to main thread
+#[derive(Debug)]
+pub struct CompletionRequest {
+    pub line: String,
+    pub pos: usize,
+    pub response_tx: std::sync::mpsc::SyncSender<Vec<Completion>>,
+}
 
 /// Add a trailing space to the single candidate's replacement if not already present.
 /// No-op when the slice is empty or has more than one element.
@@ -108,6 +125,48 @@ const FS_COMMANDS: &[&str] = &[
     "global_setvar",
 ];
 
+/// Turn ESL completion items into rustyline candidates.
+///
+/// When several candidates share a prefix longer than the typed word, every
+/// replacement becomes that prefix so a Tab narrows instead of doing nothing.
+fn esl_candidates(completions: Vec<Completion>, current_word: &str) -> Vec<Pair> {
+    let mut candidates: Vec<Pair> = completions
+        .into_iter()
+        .filter_map(|completion| match completion {
+            Completion::Write(text) => Some(Pair {
+                display: text.clone(),
+                replacement: text,
+            }),
+            Completion::Uuid { uuid, display } => uuid
+                .starts_with(current_word)
+                .then(|| Pair {
+                    display,
+                    replacement: format!("{} ", uuid),
+                }),
+            Completion::Candidate(s) => s
+                .starts_with(current_word)
+                .then(|| Pair {
+                    display: s.clone(),
+                    replacement: s,
+                }),
+        })
+        .collect();
+
+    add_trailing_space(&mut candidates);
+
+    if candidates.len() > 1 {
+        if let Some(lcp) = longest_common_prefix(&candidates).map(str::to_string) {
+            if lcp.len() > current_word.len() {
+                for candidate in &mut candidates {
+                    candidate.replacement = lcp.clone();
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
 /// FreeSWITCH CLI completer with command suggestions
 pub struct FsCliCompleter {
     filename_completer: FilenameCompleter,
@@ -137,7 +196,6 @@ impl FsCliCompleter {
     fn complete_command(&self, line: &str, pos: usize) -> rustyline::Result<(usize, Vec<Pair>)> {
         let (start, current_word) = extract_word(line, pos, None, |c| c == ' ');
 
-        // Find matching commands
         let matches: Vec<Pair> = FS_COMMANDS
             .iter()
             .copied()
@@ -250,73 +308,24 @@ impl Completer for FsCliCompleter {
         pos: usize,
         ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        // Skip ESL completion for client-side commands (starting with /)
         if !line
             .trim_start()
             .starts_with('/')
         {
-            // Try ESL completion first for FreeSWITCH commands
             let esl_completions = self.get_esl_completions(line, pos);
 
             if !esl_completions.is_empty() {
-                let mut candidates = Vec::new();
                 let (start, current_word) = extract_word(line, pos, None, |c| c == ' ');
-
-                for completion in esl_completions {
-                    match completion {
-                        Completion::Write(text) => {
-                            candidates.push(Pair {
-                                display: text.clone(),
-                                replacement: text,
-                            });
-                        }
-                        Completion::Uuid { uuid, display } => {
-                            if uuid.starts_with(current_word) {
-                                candidates.push(Pair {
-                                    display,
-                                    replacement: format!("{} ", uuid),
-                                });
-                            }
-                        }
-                        Completion::Candidate(s) => {
-                            if s.starts_with(current_word) {
-                                candidates.push(Pair {
-                                    display: s.clone(),
-                                    replacement: s,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                if candidates.len() == 1 {
-                    add_trailing_space(&mut candidates);
-                } else if candidates.len() > 1 {
-                    // Compute LCP of replacement values; if it extends beyond what the
-                    // user already typed, complete to it so multiple matches narrow down.
-                    // rustyline's longest_common_prefix uses replacement(), not display(),
-                    // giving a cleaner boundary on UUID completions.
-                    let lcp = longest_common_prefix(&candidates).map(|s| s.to_string());
-                    if let Some(lcp) = lcp {
-                        if lcp.len() > current_word.len() {
-                            for candidate in &mut candidates {
-                                candidate.replacement = lcp.clone();
-                            }
-                        }
-                    }
-                }
-
+                let candidates = esl_candidates(esl_completions, current_word);
                 if !candidates.is_empty() {
                     return Ok((start, candidates));
                 }
             }
         }
 
-        // Fallback to static command completion
         let (start, mut candidates) = self.complete_command(line, pos)?;
         add_trailing_space(&mut candidates);
 
-        // If no command matches and we're completing a path-like string, try filename completion
         if candidates.is_empty() && (line.contains('/') || line.contains('\\')) {
             let (file_start, file_candidates) = self
                 .filename_completer

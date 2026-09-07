@@ -1,28 +1,21 @@
 //! FreeSWITCH console_complete API integration
 
 use crate::channel_info::ChannelProvider;
-use crate::esl_debug::EslDebugLevel;
+use crate::completion::{Completion, CompletionRequest};
 use freeswitch_esl_tokio::EslClient;
-
-/// Typed completion item returned from all completion sources
-#[derive(Debug)]
-pub enum Completion {
-    /// Regular completion candidate (display and replacement are the same)
-    Candidate(String),
-    /// UUID completion: display is full channel info, replacement is the UUID followed by a space
-    Uuid { uuid: String, display: String },
-    /// Direct write directive — replaces the entire current token
-    Write(String),
-}
+use tracing::{trace, warn};
 
 /// Get console completions from FreeSWITCH using the console_complete API
 pub async fn get_console_complete(
     client: &EslClient,
-    line: &str,
-    pos: usize,
-    debug_level: EslDebugLevel,
+    request: &CompletionRequest,
     channel_provider: &ChannelProvider,
 ) -> Vec<Completion> {
+    let line = request
+        .line
+        .as_str();
+    let pos = request.pos;
+
     let cmd = if pos > 0 && pos < line.len() {
         format!("console_complete c={};{}", pos, line)
     } else {
@@ -34,7 +27,7 @@ pub async fn get_console_complete(
         .starts_with("uuid_")
         && line.contains(' ');
 
-    debug_level.debug_print(EslDebugLevel::Debug6, || format!("ESL API: {}", cmd));
+    trace!("ESL API: {}", cmd);
 
     if is_uuid_command {
         match channel_provider
@@ -42,24 +35,15 @@ pub async fn get_console_complete(
             .await
         {
             Ok(Some(enhanced_completions)) => {
-                debug_level.debug_print(EslDebugLevel::Debug6, || {
-                    format!(
-                        "Using enhanced UUID completion with {} channels",
-                        enhanced_completions.len()
-                    )
-                });
+                trace!(
+                    "Using enhanced UUID completion with {} channels",
+                    enhanced_completions.len()
+                );
                 return enhanced_completions;
             }
-            Ok(None) => {
-                debug_level.debug_print(EslDebugLevel::Debug6, || {
-                    "Falling back to default UUID completion".to_string()
-                });
-            }
+            Ok(None) => trace!("Falling back to default UUID completion"),
             Err(e) => {
-                tracing::warn!("UUID channel lookup failed, falling back: {:#}", e);
-                debug_level.debug_print(EslDebugLevel::Debug6, || {
-                    "Falling back to default UUID completion".to_string()
-                });
+                warn!("UUID channel lookup failed, falling back: {:#}", e);
             }
         }
     }
@@ -68,27 +52,18 @@ pub async fn get_console_complete(
         .api(&cmd)
         .await
     {
-        Ok(response) => {
-            debug_level.debug_print(EslDebugLevel::Debug6, || {
-                format!("ESL Response success: {}", response.is_success())
-            });
-
-            if let Some(body) = response.body() {
-                debug_level.debug_print(EslDebugLevel::Debug6, || {
-                    format!("ESL Response body (escaped): {:?}", body)
-                });
-                let parsed_completions = parse_console_complete_response(body);
-                debug_level.debug_print(EslDebugLevel::Debug6, || {
-                    format!("Parsed completions: {:?}", parsed_completions)
-                });
-                parsed_completions
-            } else {
-                debug_level.debug_print(EslDebugLevel::Debug6, || {
-                    format!("ESL Response: no body for command: {}", cmd)
-                });
+        Ok(response) => match response.api_result() {
+            Ok(body) => {
+                trace!("ESL Response body (escaped): {:?}", body);
+                let parsed = parse_console_complete_response(body);
+                trace!("Parsed completions: {:?}", parsed);
+                parsed
+            }
+            Err(e) => {
+                trace!("No completions for '{}': {}", cmd, e);
                 Vec::new()
             }
-        }
+        },
         Err(e) => {
             tracing::debug!("Failed to get console completions: {}", e);
             Vec::new()

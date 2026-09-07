@@ -1,6 +1,6 @@
 //! Channel information management for enhanced UUID completion
 
-use crate::console_complete::Completion;
+use crate::completion::Completion;
 use anyhow::{Context, Result};
 use freeswitch_esl_tokio::EslClient;
 use serde::Deserialize;
