@@ -135,36 +135,24 @@ fn print_history(rl: &Editor<FsCliCompleter, FileHistory>) {
     }
 }
 
-/// Run the readline loop in a blocking thread
-pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<()> {
-    let ReadlineChannels {
-        commands: cmd_tx,
-        quit: quit_tx,
-        printer: printer_tx,
-        completions: completion_tx,
-        macros,
-    } = chans;
-
+/// Build the editor with its completer and F-key macros bound.
+fn build_editor(
+    completion_tx: mpsc::UnboundedSender<CompletionRequest>,
+    macros: &HashMap<String, String>,
+) -> Result<Editor<FsCliCompleter, FileHistory>> {
     let rl_config = rustyline::Config::builder()
         .completion_type(rustyline::CompletionType::List)
         .completion_show_all_if_ambiguous(true)
         .build();
     let mut rl = Editor::<FsCliCompleter, FileHistory>::with_config(rl_config)?;
+    rl.set_helper(Some(FsCliCompleter::new(completion_tx)));
+    setup_function_key_bindings(&mut rl, macros)?;
+    Ok(rl)
+}
 
-    let completer = FsCliCompleter::new(completion_tx);
-    rl.set_helper(Some(completer));
-
-    setup_function_key_bindings(&mut rl, &macros)?;
-
-    let printer = rl.create_external_printer()?;
-    if printer_tx
-        .send(Printer::with_external(printer))
-        .is_err()
-    {
-        warn!("Session ended before printer was delivered");
-    }
-
-    let history_file = config
+/// Where history is loaded from and saved to.
+pub fn resolve_history_file(config: &AppConfig) -> PathBuf {
+    config
         .history_file
         .clone()
         .unwrap_or_else(|| match dirs::home_dir() {
@@ -176,15 +164,12 @@ pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<
                 warn!("HOME is unset, saving history in current directory");
                 PathBuf::from(".fs_cli_history")
             }
-        });
+        })
+}
 
-    if history_file.exists() {
-        if let Err(e) = rl.load_history(&history_file) {
-            warn!("Could not load history: {}", e);
-        }
-    }
-
-    let prompt_host = if config.host == "localhost" {
+/// The prompt shown before every line.
+pub fn build_prompt(config: &AppConfig) -> String {
+    let host = if config.host == "localhost" {
         gethostname()
             .to_string_lossy()
             .to_string()
@@ -193,69 +178,125 @@ pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<
             .host
             .clone()
     };
-    let prompt = format!("freeswitch@{}> ", prompt_host);
+    format!("freeswitch@{}> ", host)
+}
 
+/// What one entered line asks the readline thread to do.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LineOutcome {
+    Ignore,
+    ShowHistory,
+    Quit,
+    Send(String),
+}
+
+/// Both `/quit` and `/history` are handled here rather than by the session:
+/// this thread owns the history and the quit signal.
+pub fn classify_line(line: &str) -> LineOutcome {
+    let line = line.trim();
+    if line.is_empty() {
+        return LineOutcome::Ignore;
+    }
+    match line.parse::<ClientCommand>() {
+        Ok(ClientCommand::Quit) => LineOutcome::Quit,
+        Ok(ClientCommand::History) => LineOutcome::ShowHistory,
+        _ => LineOutcome::Send(line.to_string()),
+    }
+}
+
+/// Why the read/dispatch loop stopped.
+enum ReadlineExit {
+    /// The user asked to leave; the session still needs the quit signal.
+    Quit,
+    /// The session is already gone or input is unusable.
+    Detached,
+}
+
+fn read_dispatch_loop(
+    rl: &mut Editor<FsCliCompleter, FileHistory>,
+    prompt: &str,
+    cmd_tx: &mpsc::UnboundedSender<String>,
+) -> ReadlineExit {
     loop {
         let result = if let Some(stashed) = rl.take_stashed_line() {
-            rl.readline_with_initial(&prompt, (&stashed, ""))
+            rl.readline_with_initial(prompt, (&stashed, ""))
         } else {
-            rl.readline(&prompt)
+            rl.readline(prompt)
         };
 
         match result {
             Ok(line) => {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
+                let outcome = classify_line(&line);
+                if outcome != LineOutcome::Ignore {
+                    if let Err(e) = rl.add_history_entry(line.trim()) {
+                        warn!("Could not add history entry: {}", e);
+                    }
                 }
-
-                if let Err(e) = rl.add_history_entry(line) {
-                    warn!("Could not add history entry: {}", e);
-                }
-
-                match line.parse::<ClientCommand>() {
-                    Ok(ClientCommand::Quit) => {
+                match outcome {
+                    LineOutcome::Ignore => continue,
+                    LineOutcome::ShowHistory => print_history(rl),
+                    LineOutcome::Quit => {
                         println!("Goodbye!");
-                        if quit_tx
-                            .send(())
+                        return ReadlineExit::Quit;
+                    }
+                    LineOutcome::Send(command) => {
+                        if cmd_tx
+                            .send(command)
                             .is_err()
                         {
-                            warn!("Quit signal lost, session will not be told to exit");
+                            return ReadlineExit::Detached;
                         }
-                        break;
                     }
-                    Ok(ClientCommand::History) => {
-                        print_history(&rl);
-                        continue;
-                    }
-                    _ => {}
-                }
-
-                if cmd_tx
-                    .send(line.to_string())
-                    .is_err()
-                {
-                    break;
                 }
             }
-            Err(rustyline::error::ReadlineError::Interrupted) => {
-                println!("^C");
-                continue;
-            }
+            Err(rustyline::error::ReadlineError::Interrupted) => println!("^C"),
             Err(rustyline::error::ReadlineError::Eof) => {
                 println!("Goodbye!");
-                if quit_tx
-                    .send(())
-                    .is_err()
-                {
-                    warn!("Quit signal lost, session will not be told to exit");
-                }
-                break;
+                return ReadlineExit::Quit;
             }
             Err(e) => {
                 error!("Error reading input: {}", e);
-                break;
+                return ReadlineExit::Detached;
             }
+        }
+    }
+}
+
+/// Run the readline loop in a blocking thread
+pub fn run_readline_loop(chans: ReadlineChannels, config: &AppConfig) -> Result<()> {
+    let ReadlineChannels {
+        commands: cmd_tx,
+        quit: quit_tx,
+        printer: printer_tx,
+        completions: completion_tx,
+        macros,
+    } = chans;
+
+    let mut rl = build_editor(completion_tx, &macros)?;
+
+    let printer = rl.create_external_printer()?;
+    if printer_tx
+        .send(Printer::with_external(printer))
+        .is_err()
+    {
+        warn!("Session ended before printer was delivered");
+    }
+
+    let history_file = resolve_history_file(config);
+    if history_file.exists() {
+        if let Err(e) = rl.load_history(&history_file) {
+            warn!("Could not load history: {}", e);
+        }
+    }
+
+    let prompt = build_prompt(config);
+
+    if let ReadlineExit::Quit = read_dispatch_loop(&mut rl, &prompt, &cmd_tx) {
+        if quit_tx
+            .send(())
+            .is_err()
+        {
+            warn!("Quit signal lost, session will not be told to exit");
         }
     }
 

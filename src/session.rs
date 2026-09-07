@@ -32,7 +32,12 @@ use tracing::{debug, error, info, trace, warn};
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(unix)]
-fn save_terminal_state() -> Option<libc::termios> {
+type SavedTerminal = Option<libc::termios>;
+#[cfg(not(unix))]
+type SavedTerminal = ();
+
+#[cfg(unix)]
+fn save_terminal_state() -> SavedTerminal {
     use std::mem::MaybeUninit;
     unsafe {
         let mut termios = MaybeUninit::uninit();
@@ -45,11 +50,19 @@ fn save_terminal_state() -> Option<libc::termios> {
 }
 
 #[cfg(unix)]
-fn restore_terminal_state(termios: &libc::termios) {
-    unsafe {
-        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, termios);
+fn restore_terminal_state(saved: &SavedTerminal) {
+    if let Some(termios) = saved {
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, termios);
+        }
     }
 }
+
+#[cfg(not(unix))]
+fn save_terminal_state() -> SavedTerminal {}
+
+#[cfg(not(unix))]
+fn restore_terminal_state(_saved: &SavedTerminal) {}
 
 /// Why the command loop exited
 enum SessionEnd {
@@ -77,8 +90,8 @@ impl std::fmt::Display for DisconnectCause {
 
 /// Run interactive CLI mode with reconnection support
 pub async fn run_interactive_mode(
-    mut client: EslClient,
-    mut events: EslEventStream,
+    client: EslClient,
+    events: EslEventStream,
     config: &AppConfig,
 ) -> Result<()> {
     let mut output = Output::new(config.color);
@@ -89,24 +102,11 @@ pub async fn run_interactive_mode(
     let macros = build_macros(config);
     let (readline_chans, mut chans) = ReadlineChannels::new(macros.clone());
 
-    #[cfg(unix)]
     let original_termios = save_terminal_state();
 
-    let config_clone = config.clone();
-    let readline_handle =
-        tokio::task::spawn_blocking(move || run_readline_loop(readline_chans, &config_clone));
+    let readline_handle = spawn_readline(readline_chans, config);
 
-    let printer = match chans
-        .printer
-        .await
-    {
-        Ok(p) => p,
-        Err(_) => {
-            error!("Failed to receive external printer");
-            Printer::none()
-        }
-    };
-    output.set_printer(printer);
+    output.set_printer(receive_printer(chans.printer).await);
     let processor = CommandProcessor::new(&output);
 
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
@@ -123,11 +123,43 @@ pub async fn run_interactive_mode(
         completion_rx: &mut chans.completions,
     };
 
-    // Reconnection loop — each iteration is one connection session
-    let session_result = loop {
-        let mut event_task = spawn_event_consumer(events, &output);
+    let session_result = run_reconnect_loop(client, events, config, &mut ctx, &output).await;
 
-        let result = run_command_loop(&client, &mut ctx, &mut event_task).await;
+    shutdown_readline(readline_handle, session_result.is_err(), original_termios).await;
+
+    session_result
+}
+
+fn spawn_readline(chans: ReadlineChannels, config: &AppConfig) -> JoinHandle<Result<()>> {
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || run_readline_loop(chans, &config))
+}
+
+/// A session without the external printer still runs; its output just goes
+/// straight to stdout and can collide with the prompt.
+async fn receive_printer(rx: oneshot::Receiver<Printer>) -> Printer {
+    match rx.await {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to receive external printer: {}", e);
+            Printer::none()
+        }
+    }
+}
+
+/// One iteration is one connection session; a disconnect either ends the run or
+/// reconnects and re-runs the subscriptions the new connection needs.
+async fn run_reconnect_loop(
+    mut client: EslClient,
+    mut events: EslEventStream,
+    config: &AppConfig,
+    ctx: &mut CommandLoopCtx<'_>,
+    output: &Output,
+) -> Result<()> {
+    loop {
+        let mut event_task = spawn_event_consumer(events, output);
+
+        let result = run_command_loop(&client, ctx, &mut event_task).await;
 
         event_task.abort();
 
@@ -144,11 +176,11 @@ pub async fn run_interactive_mode(
                 {
                     warn!("Disconnect on exit failed: {:#}", e);
                 }
-                break Ok(());
+                return Ok(());
             }
             SessionEnd::Disconnected(cause) => {
                 if !config.reconnect {
-                    break Err(anyhow::anyhow!("Connection to FreeSWITCH lost: {}", cause));
+                    return Err(anyhow::anyhow!("Connection to FreeSWITCH lost: {}", cause));
                 }
                 warn!("Connection lost ({}), reconnecting...", cause);
                 let (new_client, new_events) = connect_retry_forever(config).await;
@@ -156,32 +188,32 @@ pub async fn run_interactive_mode(
                 client = new_client;
                 events = new_events;
                 setup_subscriptions(&client, config).await;
-                continue;
             }
         }
-    };
+    }
+}
 
-    readline_handle.abort();
+async fn shutdown_readline(
+    handle: JoinHandle<Result<()>>,
+    failed: bool,
+    saved_terminal: SavedTerminal,
+) {
+    handle.abort();
 
-    if session_result.is_err() {
+    if failed {
         // The readline thread is blocked in rl.readline() and cannot be
         // interrupted, so rustyline never restores the terminal itself.
-        #[cfg(unix)]
-        if let Some(ref termios) = original_termios {
-            restore_terminal_state(termios);
-        }
-        return session_result;
+        restore_terminal_state(&saved_terminal);
+        return;
     }
 
     // Clean exit: readline already broke its loop (user typed /quit or EOF),
     // so the handle resolves quickly.
-    if let Err(e) = readline_handle.await {
+    if let Err(e) = handle.await {
         if !e.is_cancelled() {
             warn!("Error waiting for readline thread: {}", e);
         }
     }
-
-    session_result
 }
 
 /// Idle-liveness is armed only when the HEARTBEAT subscription is permitted:
@@ -270,12 +302,7 @@ async fn run_command_loop(
                     Err(ref e) => error!("Event consumer task exited unexpectedly: {}", e),
                     Ok(()) => {}
                 }
-                return match client.status() {
-                    ConnectionStatus::Disconnected(r) => {
-                        SessionEnd::Disconnected(DisconnectCause::Status(r))
-                    }
-                    _ => SessionEnd::Disconnected(DisconnectCause::Unknown),
-                };
+                return SessionEnd::Disconnected(classify_event_task_exit(client.status()));
             }
             Some(command) = ctx.cmd_rx.recv() => {
                 if let Some(end) = handle_command_line(&ctx.parts, client, command).await {
@@ -293,6 +320,15 @@ async fn run_command_loop(
                 return SessionEnd::Quit;
             }
         }
+    }
+}
+
+/// The event stream ended: the client's own status names the cause, unless it
+/// still believes it is connected and there is nothing to report.
+fn classify_event_task_exit(status: ConnectionStatus) -> DisconnectCause {
+    match status {
+        ConnectionStatus::Disconnected(reason) => DisconnectCause::Status(reason),
+        _ => DisconnectCause::Unknown,
     }
 }
 
