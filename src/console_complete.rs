@@ -73,45 +73,47 @@ pub async fn get_console_complete(
 
 /// Parse the console_complete response from FreeSWITCH
 pub fn parse_console_complete_response(body: &str) -> Vec<Completion> {
-    let mut completions = Vec::new();
+    let candidates: Vec<Completion> = body
+        .lines()
+        .flat_map(bracketed_candidates)
+        .map(Completion::Candidate)
+        .collect();
 
-    for line in body.lines() {
-        let mut chars = line
-            .chars()
-            .peekable();
-        while let Some(ch) = chars.next() {
-            if ch == '[' {
-                let mut bracket_content = String::new();
-                for inner_ch in chars.by_ref() {
-                    if inner_ch == ']' {
-                        break;
-                    }
-                    bracket_content.push(inner_ch);
-                }
+    if !candidates.is_empty() {
+        return candidates;
+    }
 
-                let option_text = bracket_content.trim();
-                if !option_text.is_empty() {
-                    completions.push(Completion::Candidate(option_text.to_string()));
-                }
-            }
+    write_directive(body)
+        .into_iter()
+        .collect()
+}
+
+/// An unterminated bracket takes the rest of the line: FreeSWITCH truncates
+/// long candidate lists mid-entry.
+fn bracketed_candidates(line: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut rest = line;
+
+    while let Some((_, after)) = rest.split_once('[') {
+        let (content, tail) = after
+            .split_once(']')
+            .unwrap_or((after, ""));
+        let text = content.trim();
+        if !text.is_empty() {
+            candidates.push(text.to_string());
         }
+        rest = tail;
     }
 
-    if !completions.is_empty() {
-        return completions;
-    }
+    candidates
+}
 
-    if let Some(write_start) = body.find("write=") {
-        let write_section = &body[write_start + 6..];
-        if let Some(colon_pos) = write_section.find(':') {
-            let replacement_text = write_section[colon_pos + 1..].trim_end();
-            if !replacement_text.is_empty() {
-                completions.push(Completion::Write(replacement_text.to_string()));
-            }
-        }
-    }
+fn write_directive(body: &str) -> Option<Completion> {
+    let (_, directive) = body.split_once("write=")?;
+    let (_, replacement) = directive.split_once(':')?;
+    let replacement = replacement.trim_end();
 
-    completions
+    (!replacement.is_empty()).then(|| Completion::Write(replacement.to_string()))
 }
 
 #[cfg(test)]
@@ -131,6 +133,19 @@ mod tests {
     fn write_fallback_yields_write() {
         let completions = parse_console_complete_response("write=5:status profile");
         assert_eq!(completions.len(), 1);
+        assert!(matches!(&completions[0], Completion::Write(s) if s == "status profile"));
+    }
+
+    #[test]
+    fn an_unterminated_bracket_takes_the_rest_of_the_line() {
+        let completions = parse_console_complete_response("[status]\t[reloa");
+        assert_eq!(completions.len(), 2);
+        assert!(matches!(&completions[1], Completion::Candidate(s) if s == "reloa"));
+    }
+
+    #[test]
+    fn write_payload_keeps_inner_spaces_and_drops_the_trailing_newline() {
+        let completions = parse_console_complete_response("write=5:status profile \n");
         assert!(matches!(&completions[0], Completion::Write(s) if s == "status profile"));
     }
 
