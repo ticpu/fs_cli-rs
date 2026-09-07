@@ -12,20 +12,16 @@ use crate::connection::{
     subscribe_heartbeat, subscribe_to_events,
 };
 use crate::console_complete::get_console_complete;
-
-use crate::log_display::{display_log_event, is_log_event};
+use crate::log_display::{display_log_event, format_channel_event, is_log_event};
 use crate::printer::{Output, Printer};
 use crate::readline::{build_macros, parse_function_key, run_readline_loop, ReadlineChannels};
 use anyhow::Result;
-use colored::Colorize;
 use crossterm::{
     cursor::MoveTo,
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use freeswitch_esl_tokio::{
-    ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslEventType, HeaderLookup,
-};
+use freeswitch_esl_tokio::{ConnectionStatus, DisconnectReason, EslClient, EslEventStream};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use tokio::sync::{mpsc, oneshot};
@@ -215,51 +211,6 @@ async fn setup_subscriptions(client: &EslClient, config: &AppConfig) {
             warn!("Failed to enable logging: {}", e);
         }
     }
-}
-
-fn format_channel_event(event: &freeswitch_esl_tokio::EslEvent, output: &Output) -> Option<String> {
-    let event_type = event.event_type()?;
-
-    let label = match event_type {
-        EslEventType::ChannelCreate => "CREATE",
-        EslEventType::ChannelAnswer => "ANSWER",
-        EslEventType::ChannelHangup => "HANGUP",
-        EslEventType::Heartbeat => return None,
-        _ => return None,
-    };
-
-    let channel = event
-        .channel_name()
-        .unwrap_or("unknown");
-    let uuid = event
-        .unique_id()
-        .unwrap_or("?");
-
-    let line = if event_type == EslEventType::ChannelHangup {
-        let cause_str = match event.hangup_cause() {
-            Ok(Some(c)) => c.to_string(),
-            Ok(None) => "unknown".to_string(),
-            Err(e) => e.to_string(),
-        };
-        format!("[{}] {} {} ({})", label, uuid, channel, cause_str)
-    } else {
-        let cid_num = event
-            .caller_id_number()
-            .unwrap_or("");
-        let cid_name = event
-            .caller_id_name()
-            .unwrap_or("");
-        if !cid_num.is_empty() || !cid_name.is_empty() {
-            format!(
-                "[{}] {} {} <{}> {}",
-                label, uuid, channel, cid_num, cid_name
-            )
-        } else {
-            format!("[{}] {} {}", label, uuid, channel)
-        }
-    };
-
-    Some(output.colorize(&line, |s| s.cyan()))
 }
 
 /// Spawn a task that consumes events and displays log/channel messages

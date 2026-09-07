@@ -1,6 +1,7 @@
 //! Channel information management for enhanced UUID completion
 
 use crate::completion::Completion;
+use crate::log_display::format_caller_id;
 use anyhow::{Context, Result};
 use freeswitch_esl_tokio::EslClient;
 use serde::Deserialize;
@@ -69,19 +70,10 @@ impl ChannelProvider {
         let completions = channels
             .into_iter()
             .map(|ch| {
-                let display = if !ch
-                    .cid_num
-                    .is_empty()
-                    || !ch
-                        .cid_name
-                        .is_empty()
-                {
-                    format!(
-                        "{} {} {} ({}) <{}> {}",
-                        ch.uuid, ch.created, ch.name, ch.state, ch.cid_num, ch.cid_name
-                    )
-                } else {
-                    format!("{} {} {} ({})", ch.uuid, ch.created, ch.name, ch.state)
+                let head = format!("{} {} {} ({})", ch.uuid, ch.created, ch.name, ch.state);
+                let display = match format_caller_id(&ch.cid_num, &ch.cid_name) {
+                    Some(caller_id) => format!("{} {}", head, caller_id),
+                    None => head,
                 };
                 Completion::Uuid {
                     uuid: ch.uuid,

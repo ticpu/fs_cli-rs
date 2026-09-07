@@ -1,9 +1,8 @@
 //! Log display functionality for fs_cli-rs
 
-use crate::printer::ColorMode;
-use crate::printer::Output;
+use crate::printer::{ColorMode, Output};
 use colored::*;
-use freeswitch_esl_tokio::{EslEvent, EventHeader};
+use freeswitch_esl_tokio::{EslEvent, EslEventType, EventHeader, HeaderLookup};
 use tracing::debug;
 
 pub fn is_log_event(event: &EslEvent) -> bool {
@@ -45,6 +44,54 @@ pub fn display_log_event(event: &EslEvent, output: &Output) {
     };
 
     output.print(formatted_message);
+}
+
+/// `<number> name` for a channel, or None when neither is set.
+pub fn format_caller_id(number: &str, name: &str) -> Option<String> {
+    (!number.is_empty() || !name.is_empty()).then(|| format!("<{}> {}", number, name))
+}
+
+/// One line for a channel lifecycle event, or None for anything else.
+pub fn format_channel_event(event: &EslEvent, output: &Output) -> Option<String> {
+    let event_type = event.event_type()?;
+
+    let label = match event_type {
+        EslEventType::ChannelCreate => "CREATE",
+        EslEventType::ChannelAnswer => "ANSWER",
+        EslEventType::ChannelHangup => "HANGUP",
+        _ => return None,
+    };
+
+    let channel = event
+        .channel_name()
+        .unwrap_or("unknown");
+    let uuid = event
+        .unique_id()
+        .unwrap_or("?");
+
+    let line = if event_type == EslEventType::ChannelHangup {
+        let cause = match event.hangup_cause() {
+            Ok(Some(c)) => c.to_string(),
+            Ok(None) => "unknown".to_string(),
+            Err(e) => e.to_string(),
+        };
+        format!("[{}] {} {} ({})", label, uuid, channel, cause)
+    } else {
+        let caller_id = format_caller_id(
+            event
+                .caller_id_number()
+                .unwrap_or(""),
+            event
+                .caller_id_name()
+                .unwrap_or(""),
+        );
+        match caller_id {
+            Some(cid) => format!("[{}] {} {} {}", label, uuid, channel, cid),
+            None => format!("[{}] {} {}", label, uuid, channel),
+        }
+    };
+
+    Some(output.colorize(&line, |s| s.cyan()))
 }
 
 fn colorize_by_level(text: &str, log_level: u32) -> ColoredString {
