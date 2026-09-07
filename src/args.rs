@@ -72,7 +72,7 @@ pub struct Args {
     #[arg(short = 'q', long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub quiet: Option<bool>,
 
-    /// Configuration file path (if missing, creates from embedded example)
+    /// Configuration file path (if missing, a default is written)
     #[arg(long)]
     pub config: Option<PathBuf>,
 

@@ -38,7 +38,7 @@ Use the `/release` command (`.claude/commands/release.md`).
 
 ## Configuration (v0.2+)
 - YAML config with profiles: see `fs_cli.yaml` for example
-- Embedded default config in binary, auto-creates missing files
+- No embedded example file: a missing config is created by serializing `ProfileConfig::default()`
 - Usage: `fs_cli [profile]`, `--config path`, `--list-profiles`
 - Locations: `~/.config/fs_cli.yaml`, `~/.fs_cli.yaml`, `/etc/freeswitch/fs_cli.yaml`
 
