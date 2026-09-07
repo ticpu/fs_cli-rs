@@ -180,7 +180,7 @@ fn log_level_completions(line: &str, pos: usize) -> Option<(usize, Vec<Pair>)> {
         .find(' ')
         .unwrap_or(rest.len());
     let head = &rest[..head_len];
-    if head != "log" && head != "/log" {
+    if !head.eq_ignore_ascii_case("log") && !head.eq_ignore_ascii_case("/log") {
         return None;
     }
 
@@ -424,6 +424,13 @@ mod tests {
         let (start, candidates) = log_level_completions("log ", 4).unwrap();
         assert_eq!(start, 4);
         assert!(candidates.len() > 1);
+    }
+
+    /// `/LOG debug` runs client-side, so its Tab must behave the same.
+    #[test]
+    fn log_completes_whatever_case_the_command_word_is_typed_in() {
+        assert!(log_level_completions("/LOG ", 5).is_some());
+        assert!(log_level_completions("LOG ", 4).is_some());
     }
 
     #[test]

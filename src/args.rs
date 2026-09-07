@@ -37,7 +37,7 @@ pub struct Args {
     pub debug: Option<u8>,
 
     /// Color mode for output (never, tag, line)
-    #[arg(long)]
+    #[arg(long, ignore_case = true)]
     pub color: Option<ColorMode>,
 
     /// Execute commands and exit (can be used multiple times)
@@ -184,6 +184,17 @@ mod tests {
     use crate::printer::ColorMode;
     use freeswitch_esl_tokio::LogLevel;
     use std::collections::HashMap;
+
+    /// The YAML side parses case-insensitively; the flag must agree with it.
+    #[test]
+    fn color_accepts_any_case() {
+        use clap::Parser;
+        for spelling in ["never", "NEVER", "Never"] {
+            let args = Args::try_parse_from(["fs_cli", "--color", spelling]).unwrap();
+            assert_eq!(args.color, Some(ColorMode::Never));
+        }
+        assert!(Args::try_parse_from(["fs_cli", "--color", "rainbow"]).is_err());
+    }
 
     fn make_args_no_overrides() -> Args {
         Args {
