@@ -103,19 +103,9 @@ impl ChannelProvider {
             .await
             .with_context(|| format!("ESL API call '{}' failed", command))?;
 
-        if !response.is_success() {
-            anyhow::bail!(
-                "ESL command '{}' returned: {}",
-                command,
-                response
-                    .body()
-                    .unwrap_or("-ERR")
-            );
-        }
-
         let body = response
-            .body()
-            .unwrap_or_default();
+            .api_result()
+            .with_context(|| format!("ESL command '{}' failed", command))?;
         serde_json::from_str::<ChannelsResponse>(body)
             .with_context(|| format!("Failed to parse JSON response for '{}'", command))
     }
