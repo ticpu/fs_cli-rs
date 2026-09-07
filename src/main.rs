@@ -1,8 +1,10 @@
 //! fs_cli-rs: Interactive FreeSWITCH CLI client using ESL
 
 use anyhow::{Context, Result};
-use freeswitch_esl_tokio::{EslClient, EslError, EslEventStream, EslEventType, EventFormat};
-use tokio::time::{timeout, Duration};
+use freeswitch_esl_tokio::{
+    AuthMethod, EslClient, EslConnectOptions, EslError, EslEventStream, EslEventType, EventFormat,
+};
+use tokio::time::Duration;
 use tracing::{info, warn};
 
 mod args;
@@ -85,24 +87,21 @@ pub async fn connect_to_freeswitch(config: &AppConfig) -> Result<(EslClient, Esl
         format_host_port(&config.host, config.port)
     );
 
-    let result = if let Some(ref user) = config.user {
-        info!("Using user authentication: {}", user);
-        timeout(
-            Duration::from_millis(config.timeout),
-            EslClient::connect_with_user(&config.host, config.port, user, &config.password),
-        )
-        .await
-    } else {
-        info!("Using password authentication");
-        timeout(
-            Duration::from_millis(config.timeout),
-            EslClient::connect(&config.host, config.port, &config.password),
-        )
-        .await
+    let auth = match &config.user {
+        Some(user) => {
+            info!("Using user authentication: {}", user);
+            AuthMethod::user(user, &config.password)
+        }
+        None => {
+            info!("Using password authentication");
+            AuthMethod::password(&config.password)
+        }
     };
+    let options =
+        EslConnectOptions::default().with_connect_timeout(Duration::from_millis(config.timeout));
 
-    let (client, events) = result
-        .context("Connection timed out")?
+    let (client, events) = EslClient::connect_with_auth(&config.host, config.port, auth, options)
+        .await
         .context("Failed to connect to FreeSWITCH")?;
 
     Ok((client, events))
@@ -242,6 +241,9 @@ fn print_connect_error(e: &anyhow::Error, config: &AppConfig) {
     if let Some(esl_err) = e.downcast_ref::<EslError>() {
         match esl_err {
             EslError::Io(io_err) => print_io_hint(io_err, config),
+            EslError::Timeout { timeout_ms } => {
+                eprintln!("Connection timed out after {} ms", timeout_ms)
+            }
             _ => eprintln!("Error: {}", esl_err),
         }
     } else if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
