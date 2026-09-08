@@ -15,6 +15,7 @@ mod config;
 mod connection;
 mod console_complete;
 mod esl_debug;
+mod legacy_config;
 mod log_display;
 mod log_level;
 mod printer;

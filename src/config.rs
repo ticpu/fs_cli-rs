@@ -217,6 +217,16 @@ pub struct AppConfig {
     pub max_auto_complete_uuid: u32,
 }
 
+/// The two names C fs_cli reads. Anything else is parsed as YAML, so an
+/// explicit `--config` never silently changes format.
+fn is_legacy(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension == "conf")
+        || path
+            .file_name()
+            .is_some_and(|name| name == ".fs_cli_conf")
+}
+
 impl FsCliConfig {
     /// Load configuration from file or create default
     pub fn load(config_path: Option<PathBuf>) -> Result<Self> {
@@ -226,6 +236,7 @@ impl FsCliConfig {
             });
 
         match selected {
+            Some(path) if is_legacy(&path) => crate::legacy_config::read(&path),
             Some(path) => Self::read_file(&path),
             None => {
                 let default_config = Self::default();
@@ -300,6 +311,12 @@ impl FsCliConfig {
         }
 
         paths.push(PathBuf::from("/etc/freeswitch/fs_cli.yaml"));
+
+        if let Some(home_dir) = dirs::home_dir() {
+            paths.push(home_dir.join(".fs_cli_conf"));
+        }
+
+        paths.push(PathBuf::from("/etc/fs_cli.conf"));
 
         paths
     }
@@ -386,16 +403,38 @@ mod tests {
     #[test]
     fn default_paths_end_at_the_system_wide_file() {
         let paths = FsCliConfig::get_default_config_paths();
-        assert_eq!(
-            paths.last(),
-            Some(&PathBuf::from("/etc/freeswitch/fs_cli.yaml"))
-        );
+        assert_eq!(paths.last(), Some(&PathBuf::from("/etc/fs_cli.conf")));
         assert!(paths
             .iter()
             .any(|p| p.ends_with(".config/fs_cli.yaml")));
         assert!(paths
             .iter()
             .any(|p| p.ends_with(".fs_cli.yaml")));
+    }
+
+    #[test]
+    fn every_yaml_candidate_is_tried_before_any_legacy_one() {
+        let paths = FsCliConfig::get_default_config_paths();
+        let first_legacy = paths
+            .iter()
+            .position(|p| is_legacy(p))
+            .expect("a legacy candidate");
+
+        assert!(paths[..first_legacy]
+            .iter()
+            .all(|p| !is_legacy(p)));
+        assert_eq!(
+            paths[first_legacy - 1],
+            PathBuf::from("/etc/freeswitch/fs_cli.yaml")
+        );
+    }
+
+    #[test]
+    fn only_the_two_names_c_fs_cli_reads_are_legacy() {
+        assert!(is_legacy(Path::new("/etc/fs_cli.conf")));
+        assert!(is_legacy(Path::new("/home/u/.fs_cli_conf")));
+        assert!(!is_legacy(Path::new("/etc/freeswitch/fs_cli.yaml")));
+        assert!(!is_legacy(Path::new("/srv/fs_cli")));
     }
 
     #[test]

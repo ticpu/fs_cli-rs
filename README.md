@@ -87,7 +87,15 @@ fs_cli --log-file - -l notice
 
 ## Configuration
 
-On first run, `fs_cli` creates a default config at `~/.config/fs_cli.yaml`.
+Search order: `~/.config/fs_cli.yaml`, `~/.fs_cli.yaml`,
+`/etc/freeswitch/fs_cli.yaml`, then the C fs_cli files `~/.fs_cli_conf` and
+`/etc/fs_cli.conf`. On first run with none of them present, `fs_cli` creates a
+default config at `~/.config/fs_cli.yaml`.
+
+A legacy file is read only when no YAML one exists, and carries just the keys a
+batch run needs — host, port, user, password, debug, loglevel, quiet,
+connect-timeout. Everything else in it is listed in a warning and ignored.
+
 Profiles override defaults per-connection:
 
 ```yaml

@@ -33,6 +33,7 @@ Use the `/release` command (`.claude/commands/release.md`).
 - `src/channel_info.rs` — UUID completion from channel list
 - `src/log_display.rs` — log event formatting and display
 - `src/config.rs` + `src/args.rs` — YAML profiles, CLI args (see `fs_cli.yaml`)
+- `src/legacy_config.rs` — C fs_cli `fs_cli.conf` reader, batch-relevant keys only
 - `src/esl_debug.rs` — client-side debug levels (0-7)
 - Multi-arch releases: Linux AMD64/ARM64, Windows AMD64
 - Release naming: `fs_cli_${version}_{amd64|arm64}.debian-compatible`, `fs_cli_${version}_amd64.windows.exe`
@@ -41,7 +42,8 @@ Use the `/release` command (`.claude/commands/release.md`).
 - YAML config with profiles: see `fs_cli.yaml` for example
 - No embedded example file: a missing config is created by serializing `ProfileConfig::default()`
 - Usage: `fs_cli [profile]`, `--config path`, `--list-profiles`
-- Locations: `~/.config/fs_cli.yaml`, `~/.fs_cli.yaml`, `/etc/freeswitch/fs_cli.yaml`
+- Locations: `~/.config/fs_cli.yaml`, `~/.fs_cli.yaml`, `/etc/freeswitch/fs_cli.yaml`,
+  then legacy `~/.fs_cli_conf`, `/etc/fs_cli.conf` (warns, batch keys only)
 
 ## Dependencies
 - `freeswitch-esl-tokio`, `rustyline` (git deps)
