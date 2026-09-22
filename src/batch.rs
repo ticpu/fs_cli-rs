@@ -145,7 +145,7 @@ impl<'a> Batch<'a> {
         Self {
             client,
             events,
-            processor: CommandProcessor::new(&output),
+            processor: CommandProcessor::new(&output, config.originate_check),
             output,
             log,
             jobs: BgJobTracker::new(),
@@ -173,6 +173,8 @@ impl<'a> Batch<'a> {
     }
 
     async fn submit_job(&mut self, command: &str) -> Result<()> {
+        self.processor
+            .report_originate(command);
         match self
             .jobs
             .bgapi(self.client, command, command.to_string())

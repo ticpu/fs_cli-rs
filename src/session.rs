@@ -110,7 +110,7 @@ pub async fn run_interactive_mode(
     let readline_handle = spawn_readline(readline_chans, config);
 
     output.set_printer(receive_printer(chans.printer).await);
-    let processor = CommandProcessor::new(&output);
+    let processor = CommandProcessor::new(&output, config.originate_check);
 
     let channel_provider = ChannelProvider::new(config.max_auto_complete_uuid);
 

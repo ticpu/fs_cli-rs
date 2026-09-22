@@ -2,6 +2,7 @@
 
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::LogSetting;
+use crate::originate_check::OriginateCheck;
 use crate::printer::ColorMode;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,9 @@ pub struct ProfileConfig {
 
     /// Maximum number of channels to show in auto-complete
     pub max_auto_complete_uuid: u32,
+
+    /// What to do about an originate the switch may read differently
+    pub originate_check: OriginateCheck,
 }
 
 impl Default for ProfileConfig {
@@ -83,6 +87,7 @@ impl Default for ProfileConfig {
             quiet: false,
             macros: crate::readline::get_default_fnkeys(),
             max_auto_complete_uuid: 32,
+            originate_check: OriginateCheck::Warn,
         }
     }
 }
@@ -107,6 +112,7 @@ struct ProfileOverrides {
     quiet: Option<bool>,
     macros: Option<HashMap<String, String>>,
     max_auto_complete_uuid: Option<u32>,
+    originate_check: Option<OriginateCheck>,
 }
 
 impl<'de> Deserialize<'de> for ProfileConfig {
@@ -155,6 +161,9 @@ impl<'de> Deserialize<'de> for ProfileConfig {
             max_auto_complete_uuid: set
                 .max_auto_complete_uuid
                 .unwrap_or(base.max_auto_complete_uuid),
+            originate_check: set
+                .originate_check
+                .unwrap_or(base.originate_check),
         })
     }
 }
@@ -181,6 +190,7 @@ impl ProfileConfig {
             log_file: None,
             job_timeout: None,
             max_auto_complete_uuid: self.max_auto_complete_uuid,
+            originate_check: self.originate_check,
         }
     }
 }
@@ -215,6 +225,7 @@ pub struct AppConfig {
     pub log_file: Option<String>,
     pub job_timeout: Option<u64>,
     pub max_auto_complete_uuid: u32,
+    pub originate_check: OriginateCheck,
 }
 
 /// The two names C fs_cli reads. Anything else is parsed as YAML, so an
@@ -472,6 +483,7 @@ fs_cli:
     color:
     log_level:
     macros:
+    originate_check:
 "#;
         let config: FsCliConfig = serde_yaml::from_str(yaml_content).unwrap();
         let app = config
@@ -479,6 +491,7 @@ fs_cli:
             .unwrap()
             .into_app_config();
         let defaults = ProfileConfig::default();
+        assert_eq!(app.originate_check, defaults.originate_check);
         assert_eq!(app.host, defaults.host);
         assert_eq!(app.port, defaults.port);
         assert_eq!(app.password, defaults.password);
@@ -551,6 +564,14 @@ fs_cli:
     debug: 99
 "#;
         let result: Result<FsCliConfig, _> = serde_yaml::from_str(bad_debug);
+        assert!(result.is_err());
+
+        let bad_check = r#"
+fs_cli:
+  p:
+    originate_check: maybe
+"#;
+        let result: Result<FsCliConfig, _> = serde_yaml::from_str(bad_check);
         assert!(result.is_err());
     }
 

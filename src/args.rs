@@ -3,6 +3,7 @@
 use crate::config::{AppConfig, BatchCommand, FsCliConfig, ProfileConfig};
 use crate::esl_debug::EslDebugLevel;
 use crate::log_level::LogSetting;
+use crate::originate_check::OriginateCheck;
 use crate::printer::ColorMode;
 use anyhow::Result;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
@@ -39,6 +40,10 @@ pub struct Args {
     /// Color mode for output (never, tag, line)
     #[arg(long, ignore_case = true)]
     pub color: Option<ColorMode>,
+
+    /// Report what the switch will install for an originate (off, warn)
+    #[arg(long, ignore_case = true)]
+    pub originate_check: Option<OriginateCheck>,
 
     /// Execute commands and exit (can be used multiple times)
     #[arg(short = 'x', action = clap::ArgAction::Append)]
@@ -151,7 +156,7 @@ impl Args {
     }
 
     /// Apply CLI argument overrides to an already-loaded AppConfig.
-    // qual:allow(complexity, max_cyclomatic=14) reason: "flat sequence of one if-let override per CLI flag; the clearest form, splitting would scatter it"
+    // qual:allow(complexity, max_cyclomatic=15) reason: "flat sequence of one if-let override per CLI flag; the clearest form, splitting would scatter it"
     pub fn apply_to(&self, config: &mut AppConfig) -> Result<()> {
         if let Some(host) = &self.host {
             config.host = host.clone();
@@ -170,6 +175,9 @@ impl Args {
         }
         if let Some(color) = self.color {
             config.color = color;
+        }
+        if let Some(originate_check) = self.originate_check {
+            config.originate_check = originate_check;
         }
         if let Some(log_file) = &self.log_file {
             config.log_file = Some(log_file.clone());
@@ -237,6 +245,7 @@ mod tests {
     use crate::config::{AppConfig, BatchCommand};
     use crate::esl_debug::EslDebugLevel;
     use crate::log_level::LogSetting;
+    use crate::originate_check::OriginateCheck;
     use crate::printer::ColorMode;
     use clap::CommandFactory;
     use freeswitch_esl_tokio::LogLevel;
@@ -262,6 +271,7 @@ mod tests {
             user: None,
             debug: None,
             color: None,
+            originate_check: None,
             execute: Vec::new(),
             bg_execute: Vec::new(),
             log_file: None,
@@ -298,6 +308,7 @@ mod tests {
             macros: HashMap::new(),
             execute: Vec::new(),
             max_auto_complete_uuid: 32,
+            originate_check: OriginateCheck::Warn,
         }
     }
 

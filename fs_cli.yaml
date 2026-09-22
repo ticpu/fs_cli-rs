@@ -12,6 +12,7 @@ fs_cli:
     events: false
     log_level: debug
     quiet: false
+    originate_check: warn
     macros:
       f1: help
       f2: status

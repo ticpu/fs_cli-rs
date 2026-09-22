@@ -2,6 +2,7 @@
 
 use crate::client_command::{ClientCommand, ParseError};
 use crate::log_level::{set_log_level, LogSetting};
+use crate::originate_check::{check, OriginateCheck};
 use crate::printer::Output;
 use anyhow::{Error, Result};
 use colored::Colorize;
@@ -44,13 +45,15 @@ fn frame_failure<'a>(failure: &CommandFailure<'a>) -> Option<(&'static str, &'a 
 /// Command processor for FreeSWITCH CLI commands
 pub struct CommandProcessor {
     output: Output,
+    originate_check: OriginateCheck,
 }
 
 impl CommandProcessor {
     /// Create new command processor
-    pub fn new(output: &Output) -> Self {
+    pub fn new(output: &Output, originate_check: OriginateCheck) -> Self {
         Self {
             output: output.clone(),
+            originate_check,
         }
     }
 
@@ -81,6 +84,7 @@ impl CommandProcessor {
     /// Execute a FreeSWITCH command
     pub async fn execute_command(&self, client: &EslClient, command: &str) -> Result<()> {
         trace!("execute_command called with: '{}'", command);
+        self.report_originate(command);
 
         if let Some(result) = self
             .handle_special_command(client, command)
@@ -106,6 +110,14 @@ impl CommandProcessor {
         }
 
         Ok(())
+    }
+
+    /// Say what the switch will install for an `originate`, before it goes out.
+    pub fn report_originate(&self, command: &str) {
+        if let Some(report) = check(self.originate_check, command).report {
+            self.output
+                .print_labeled("Originate", &report);
+        }
     }
 
     /// Print a refused command and survive it; a transport fault propagates, so
