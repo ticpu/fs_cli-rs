@@ -41,7 +41,7 @@ pub struct Args {
     #[arg(long, ignore_case = true)]
     pub color: Option<ColorMode>,
 
-    /// Report what the switch will install for an originate (off, warn)
+    /// Report what the switch will install for an originate (off, warn, fix)
     #[arg(long, ignore_case = true)]
     pub originate_check: Option<OriginateCheck>,
 

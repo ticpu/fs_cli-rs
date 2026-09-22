@@ -173,8 +173,10 @@ impl<'a> Batch<'a> {
     }
 
     async fn submit_job(&mut self, command: &str) -> Result<()> {
-        self.processor
-            .report_originate(command);
+        let sent = self
+            .processor
+            .checked_originate(command);
+        let command = sent.as_str();
         match self
             .jobs
             .bgapi(self.client, command, command.to_string())

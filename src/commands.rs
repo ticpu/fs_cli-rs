@@ -84,7 +84,8 @@ impl CommandProcessor {
     /// Execute a FreeSWITCH command
     pub async fn execute_command(&self, client: &EslClient, command: &str) -> Result<()> {
         trace!("execute_command called with: '{}'", command);
-        self.report_originate(command);
+        let sent = self.checked_originate(command);
+        let command = sent.as_str();
 
         if let Some(result) = self
             .handle_special_command(client, command)
@@ -112,12 +113,17 @@ impl CommandProcessor {
         Ok(())
     }
 
-    /// Say what the switch will install for an `originate`, before it goes out.
-    pub fn report_originate(&self, command: &str) {
-        if let Some(report) = check(self.originate_check, command).report {
+    /// The line to send for `command`, having said what the switch will install for an
+    /// `originate` and rewritten it when the policy asks and the rewrite verifies.
+    pub fn checked_originate(&self, command: &str) -> String {
+        let checked = check(self.originate_check, command);
+        if let Some(report) = checked.report {
             self.output
                 .print_labeled("Originate", &report);
         }
+        checked
+            .rewritten
+            .unwrap_or_else(|| command.to_string())
     }
 
     /// Print a refused command and survive it; a transport fault propagates, so
