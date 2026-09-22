@@ -32,6 +32,7 @@ Use the `/release` command (`.claude/commands/release.md`).
 - `src/completion.rs` — tab completion (rustyline helper)
 - `src/channel_info.rs` — UUID completion from channel list
 - `src/log_display.rs` — log event formatting and display
+- `src/originate_check.rs` — what the switch installs for a typed `originate`, and the opt-in rewrite
 - `src/config.rs` + `src/args.rs` — YAML profiles, CLI args (see `fs_cli.yaml`)
 - `src/legacy_config.rs` — C fs_cli `fs_cli.conf` reader, batch-relevant keys only
 - `src/esl_debug.rs` — client-side debug levels (0-7)
