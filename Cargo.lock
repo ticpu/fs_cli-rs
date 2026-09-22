@@ -273,9 +273,9 @@ checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
 name = "freeswitch-esl-tokio"
-version = "2.5.1"
+version = "2.7.0-beta5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93f149f53a7afa4154a4266d59423cab53a885751df4a8fb226688f0282c42c3"
+checksum = "edc9310ed3a23d1f1d6b0a9d60721f396d0afa54874e603df9fb60e1569c3a3d"
 dependencies = [
  "bytes",
  "freeswitch-types",
@@ -292,9 +292,9 @@ dependencies = [
 
 [[package]]
 name = "freeswitch-types"
-version = "1.5.0"
+version = "1.7.0-beta5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30164a90b6b8268566d090fccd13caddad4d46261ef9a37ce4c127ff8ddca69f"
+checksum = "2a0ee3c2caa997ab95e46fb627d13de7bb3c59c7fb8b785e162ac3a3f018c318"
 dependencies = [
  "indexmap",
  "percent-encoding",
