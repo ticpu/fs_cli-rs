@@ -47,7 +47,7 @@ pub(crate) async fn connect_retry_forever(config: &AppConfig) -> (EslClient, Esl
         match connect_to_freeswitch(config).await {
             Ok(pair) => return pair,
             Err(e) => {
-                warn!("Connection attempt failed: {}", e);
+                warn!("Connection attempt failed: {:#}", e);
                 info!("Retrying in {} ms...", config.timeout);
                 tokio::time::sleep(Duration::from_millis(config.timeout)).await;
             }
