@@ -9,7 +9,7 @@ use crate::commands::CommandProcessor;
 use crate::completion::CompletionRequest;
 use crate::config::AppConfig;
 use crate::connection::{
-    connect_retry_forever, enable_logging, is_connection_error, is_permission_denied,
+    connect_retrying, enable_logging, is_connection_error, is_permission_denied,
     subscribe_heartbeat, subscribe_to_events,
 };
 use crate::console_complete::get_console_complete;
@@ -195,7 +195,7 @@ async fn run_reconnect_loop(
                     return Err(anyhow::anyhow!("Connection to FreeSWITCH lost: {}", cause));
                 }
                 warn!("Connection lost ({}), reconnecting...", cause);
-                let (new_client, new_events) = connect_retry_forever(config).await;
+                let (new_client, new_events) = connect_retrying(config).await?;
                 info!("Reconnected successfully");
                 client = new_client;
                 events = new_events;

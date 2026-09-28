@@ -41,11 +41,12 @@ pub(crate) async fn connect_to_freeswitch(
     Ok((client, events))
 }
 
-/// Retry connecting forever. Never returns — loops until a connection succeeds.
-pub(crate) async fn connect_retry_forever(config: &AppConfig) -> (EslClient, EslEventStream) {
+/// Retry connecting until it succeeds or the switch refuses these credentials.
+pub(crate) async fn connect_retrying(config: &AppConfig) -> Result<(EslClient, EslEventStream)> {
     loop {
         match connect_to_freeswitch(config).await {
-            Ok(pair) => return pair,
+            Ok(pair) => return Ok(pair),
+            Err(e) if is_refused(&e) => return Err(e),
             Err(e) => {
                 warn!("Connection attempt failed: {:#}", e);
                 info!("Retrying in {} ms...", config.timeout);
@@ -65,7 +66,16 @@ pub(crate) async fn connect_to_freeswitch_with_retry(
         "Retry mode enabled - will retry every {} ms",
         config.timeout
     );
-    Ok(connect_retry_forever(config).await)
+    connect_retrying(config).await
+}
+
+/// Auth rejection and ACL denial are configuration faults; retrying repeats them.
+fn is_refused(error: &anyhow::Error) -> bool {
+    // qual:allow(coupling, deh) reason: "classifying EslError is what this asks"
+    matches!(
+        error.downcast_ref::<EslError>(),
+        Some(EslError::AuthenticationFailed { .. } | EslError::AccessDenied { .. })
+    )
 }
 
 /// Check if error indicates connection loss
@@ -213,6 +223,25 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
         let err: anyhow::Error = io_err.into();
         assert!(!is_connection_error(&err));
+    }
+
+    #[test]
+    fn retry_stops_only_on_refused_credentials() {
+        let err: anyhow::Error = EslError::auth_failed("-ERR invalid").into();
+        assert!(is_refused(&err.context("Failed to connect to FreeSWITCH")));
+
+        let err: anyhow::Error = EslError::AccessDenied {
+            reason: "rude-rejection".into(),
+        }
+        .into();
+        assert!(is_refused(&err));
+
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let err: anyhow::Error = EslError::from(io_err).into();
+        assert!(!is_refused(&err));
+
+        let err: anyhow::Error = EslError::Timeout { timeout_ms: 1000 }.into();
+        assert!(!is_refused(&err));
     }
 
     #[test]
