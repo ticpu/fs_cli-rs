@@ -47,10 +47,10 @@ impl EslDebugLevel {
             EslDebugLevel::Warning => "warn",
             EslDebugLevel::Info => "info",
             EslDebugLevel::Debug | EslDebugLevel::Debug5 => {
-                "fs_cli_rs=debug,freeswitch_esl_tokio=debug,rustyline=warn"
+                "warn,fs_cli=debug,freeswitch_esl_tokio=debug"
             }
             EslDebugLevel::Debug6 | EslDebugLevel::Debug7 => {
-                "fs_cli_rs=trace,freeswitch_esl_tokio=trace,rustyline=warn"
+                "warn,fs_cli=trace,freeswitch_esl_tokio=trace"
             }
         }
     }
